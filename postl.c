@@ -277,7 +277,7 @@ typedef enum builtin_enum_t{
 	BI_PRINT,
 	BI_BLOCKOPEN, /*BI_BLOCKCLOSE,*/ //blockclose is directly handled by execute_token
 	BI_DEF,
-	BI_SWAP, BI_DUP,
+	BI_SWAP, BI_DUP, BI_ROLL, BI_ROTATE,
 	BI_STACKDUMP
 } builtin_enum_t;
 
@@ -311,6 +311,8 @@ static void initialise_builtins_hmap(void){
 	builtin_add("def",      BI_DEF);
 	builtin_add("swap",     BI_SWAP);
 	builtin_add("dup",      BI_DUP);
+	builtin_add("roll",     BI_ROLL);
+	builtin_add("rotate",   BI_ROTATE);
 	builtin_add("stackdump",BI_STACKDUMP);
 
 	builtins_hmap_initialised=true;
@@ -341,9 +343,6 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 
 #define CANNOT_USE(type) RETURN_WITH_ERROR("postl: Cannot use %s in '%s'",valtype_string((type)),(name))
 
-#define CANNOT_CONVERT(type,to) \
-		RETURN_WITH_ERROR("postl: Cannot convert %s to %s in '%s'",valtype_string((type)),(to),name)
-
 	postl_stackval_t a,b;
 	postl_stackval_t res;
 
@@ -351,21 +350,17 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 		case BI_PLUS: STACKSIZE_CHECK(2);
 			b=postl_stack_pop(prog);
 			a=postl_stack_pop(prog);
-			if(a.type==POSTL_BLOCK||b.type==POSTL_BLOCK){
+			if(a.type!=b.type)
+				RETURN_WITH_ERROR("postl: Builtin '+' needs arguments of similar types (%s != %s)",
+					valtype_string(a.type),valtype_string(b.type));
+			if(a.type==POSTL_BLOCK){
 				CANNOT_USE(POSTL_BLOCK);
-			} else if(a.type==POSTL_STR||b.type==POSTL_STR){
+			} else if(a.type==POSTL_STR){
 				res.type=POSTL_STR;
-				if(a.type!=POSTL_STR){
-					if(a.type!=POSTL_NUM)CANNOT_CONVERT(a.type,"string");
-					asprintf(&res.strv,"%lf%s",a.numv,b.strv);
-					if(!res.strv)outofmem();
-				} else {
-					if(b.type!=POSTL_NUM)CANNOT_CONVERT(b.type,"string");
-					asprintf(&res.strv,"%s%lf",a.strv,b.numv);
-					if(!res.strv)outofmem();
-				}
+				asprintf(&res.strv,"%s%s",a.strv,b.strv);
+				if(!res.strv)outofmem();
 			} else {
-				assert(a.type==POSTL_NUM&&b.type==POSTL_NUM);
+				assert(a.type==POSTL_NUM);
 				res.type=POSTL_NUM;
 				res.numv=a.numv+b.numv;
 			}
@@ -457,6 +452,41 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			postl_stack_push(prog,prog->stack->val);
 			break;
 
+		// positive roll amount *extracts* elements from the stack bottom
+		// negative roll amount *inserts* elements at the stack bottom
+		case BI_ROLL:{ STACKSIZE_CHECK(1);
+			a=postl_stack_pop(prog);
+			if(a.type!=POSTL_NUM)CANNOT_USE(a.type);
+			if((double)(int)a.numv!=a.numv)
+				RETURN_WITH_ERROR("postl: Argument to 'roll' not integral");
+			int stacksize=postl_stack_size(prog);
+			if(stacksize==0)break;  // nothing to do
+			int amount=(int)a.numv%stacksize;
+			if(amount>0){
+				stackitem_t *newbot=prog->stack;
+				for(int i=0;i<stacksize-amount-1;i++)newbot=newbot->next;
+				stackitem_t *newtop=newbot->next;
+				assert(newtop);  // because amount>0
+				stackitem_t *bottom=newtop;
+				while(bottom->next)bottom=bottom->next;
+				newbot->next=NULL;
+				bottom->next=prog->stack;
+				prog->stack=newtop;
+			} else if(amount<0){
+				amount=-amount;
+				stackitem_t *newbot=prog->stack;
+				for(int i=0;i<amount-1;i++)newbot=newbot->next;
+				stackitem_t *newtop=newbot->next;
+				assert(newtop);  // because amount<0
+				stackitem_t *bottom=newtop;
+				while(bottom->next)bottom=bottom->next;
+				newbot->next=NULL;
+				bottom->next=prog->stack;
+				prog->stack=newtop;
+			}
+			break;
+		}
+
 		case BI_STACKDUMP:
 			for(stackitem_t *si=prog->stack;si;si=si->next){
 				switch(si->val.type){
@@ -488,7 +518,6 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			return errbuf;
 	}
 
-#undef CANNOT_CONVERT
 #undef CANNOT_USE
 #undef STACKSIZE_CHECK
 #undef RETURN_WITH_ERROR
