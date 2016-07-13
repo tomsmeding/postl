@@ -1,5 +1,13 @@
-"vecnorm" {
-	dup * swap dup * + sqrt
+"lf" {
+	"\n" print
 } def
 
-3 4 vecnorm print  # 5
+"vecnorm" {
+	dup * swap dup * + sqrt
+} stackdump def
+
+3 4 vecnorm print lf  # 5
+
+"main" {
+	"Someone called my main function!\n" print
+} def

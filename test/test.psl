@@ -1,3 +1,7 @@
-1 2 + print
-" kazen\n" print
+10.2 3.1 + print "\n" print
+10.2 3.1 - print "\n" print
+10.2 3.1 * print "\n" print
+10.2 3.1 / print "\n" print
+10.2 3.1 % print "\n" print
+"kazen\n" print
 "iets" 45 kaas print "\n" print

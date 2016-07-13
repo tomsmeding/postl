@@ -42,6 +42,27 @@ static const char* valtype_string(postl_valtype_t type){
 	}
 }
 
+static double realmodulo(double a,double b){
+	if(b==0)return nan("");
+	int sa=a<0?-1:1;
+	a=fabs(a); b=fabs(b);
+	return sa*(a-b*floor(a/b));
+}
+
+static void pprintstr(const char *str){
+	putchar('"');
+	for(const char *p=str;*p;p++){
+		if(*p=='\n')printf("\\n");
+		else if(*p=='\r')printf("\\r");
+		else if(*p=='\t')printf("\\t");
+		else if(*p=='\\')printf("\\\\");
+		else if(*p=='"')printf("\\\"");
+		else if(*p<32||*p>126)printf("\\x%02X",*p);
+		else putchar(*p);
+	}
+	putchar('"');
+}
+
 
 typedef enum tokentype_t{
 	TT_NUM,
@@ -98,7 +119,10 @@ static int tokenise(token_t **tokensp,const char *source){
 #define DESTROY_TOKENS_RET_MIN1 do {for(int i=0;i<len;i++)free(tokens[i].str); free(tokens); return -1;} while(0)
 
 	for(int i=0;i<sourcelen;i++){
-		if(isdigit(source[i])){
+		if(source[i]=='#'){ // comment
+			i++;
+			while(i<sourcelen&&source[i]!='\n')i++;
+		} else if(isdigit(source[i])){
 			char *endp;
 			double nval=strtod(source+i,&endp);
 			int numlen=endp-(source+i);
@@ -250,7 +274,11 @@ static const char* execute_token(postl_program_t *prog,token_t token){
 
 typedef enum builtin_enum_t{
 	BI_PLUS, BI_MINUS, BI_TIMES, BI_DIVIDE, BI_MODULO,
-	BI_PRINT
+	BI_PRINT,
+	BI_BLOCKOPEN, /*BI_BLOCKCLOSE,*/ //blockclose is directly handled by execute_token
+	BI_DEF,
+	BI_SWAP, BI_DUP,
+	BI_STACKDUMP
 } builtin_enum_t;
 
 typedef struct builtin_llitem_t {
@@ -259,7 +287,7 @@ typedef struct builtin_llitem_t {
 	struct builtin_llitem_t *next;
 } builtin_llitem_t;
 
-builtin_llitem_t *builtins_hmap[127]={NULL};
+builtin_llitem_t *builtins_hmap[FUNC_HMAP_SZ]={NULL};
 bool builtins_hmap_initialised=false;
 
 static void builtin_add(const char *name,builtin_enum_t id){
@@ -273,12 +301,17 @@ static void builtin_add(const char *name,builtin_enum_t id){
 }
 
 static void initialise_builtins_hmap(void){
-	builtin_add("+",      BI_PLUS);
-	builtin_add("-",      BI_MINUS);
-	builtin_add("*",      BI_TIMES);
-	builtin_add("/",      BI_DIVIDE);
-	builtin_add("%",      BI_MODULO);
-	builtin_add("print",  BI_PRINT);
+	builtin_add("+",        BI_PLUS);
+	builtin_add("-",        BI_MINUS);
+	builtin_add("*",        BI_TIMES);
+	builtin_add("/",        BI_DIVIDE);
+	builtin_add("%",        BI_MODULO);
+	builtin_add("print",    BI_PRINT);
+	builtin_add("{",        BI_BLOCKOPEN);
+	builtin_add("def",      BI_DEF);
+	builtin_add("swap",     BI_SWAP);
+	builtin_add("dup",      BI_DUP);
+	builtin_add("stackdump",BI_STACKDUMP);
 
 	builtins_hmap_initialised=true;
 }
@@ -291,7 +324,7 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 		if(strcmp(lli->name,name)==0)break;
 		lli=lli->next;
 	}
-	*found=(bool)lli;
+	if(found)*found=(bool)lli;
 	if(!lli)return NULL;
 
 #define RETURN_WITH_ERROR(...) \
@@ -302,8 +335,8 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 
 #define STACKSIZE_CHECK(n) \
 		do if(prog->stacksz<n) \
-			RETURN_WITH_ERROR("postl: builtin '%s' needs %d arguments, but got %d", \
-				name,n,prog->stacksz); \
+			RETURN_WITH_ERROR("postl: builtin '%s' needs %d argument%s, but got %d", \
+				name,n,n==1?"":"s",prog->stacksz); \
 		while(0)
 
 #define CANNOT_USE(type) RETURN_WITH_ERROR("postl: Cannot use %s in '%s'",valtype_string((type)),(name))
@@ -337,17 +370,29 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 				res.numv=a.numv+b.numv;
 			}
 			postl_stack_push(prog,res);
+			postl_stackval_release(prog,a);
+			postl_stackval_release(prog,b);
 			break;
 
-		case BI_MINUS: STACKSIZE_CHECK(2);
-			b=postl_stack_pop(prog);
-			a=postl_stack_pop(prog);
-			if(a.type!=POSTL_NUM)CANNOT_USE(a.type);
-			if(b.type!=POSTL_NUM)CANNOT_USE(b.type);
-			res.type=POSTL_NUM;
-			res.numv=a.numv+b.numv;
-			postl_stack_push(prog,res);
+#define SIMPLE_BINARY_ARITH_OP(id,expr) \
+		case (id): STACKSIZE_CHECK(2); \
+			b=postl_stack_pop(prog); \
+			a=postl_stack_pop(prog); \
+			if(a.type!=POSTL_NUM)CANNOT_USE(a.type); \
+			if(b.type!=POSTL_NUM)CANNOT_USE(b.type); \
+			res.type=POSTL_NUM; \
+			res.numv=(expr); \
+			postl_stack_push(prog,res); \
+			postl_stackval_release(prog,a); \
+			postl_stackval_release(prog,b); \
 			break;
+
+		SIMPLE_BINARY_ARITH_OP(BI_MINUS,a.numv-b.numv)
+		SIMPLE_BINARY_ARITH_OP(BI_TIMES,a.numv*b.numv)
+		SIMPLE_BINARY_ARITH_OP(BI_DIVIDE,b.numv==0?nan(""):a.numv/b.numv)
+		SIMPLE_BINARY_ARITH_OP(BI_MODULO,realmodulo(a.numv,b.numv))
+
+#undef SIMPLE_BINARY_ARITH_OP
 
 		case BI_PRINT: STACKSIZE_CHECK(1);
 			a=postl_stack_pop(prog);
@@ -361,6 +406,81 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 				default:
 					CANNOT_USE(a.type);
 			}
+			postl_stackval_release(prog,a);
+			break;
+
+		case BI_BLOCKOPEN:
+			assert(!prog->buildblock);
+			prog->buildblock=malloc(sizeof(code_t));
+			if(!prog->buildblock)outofmem();
+			prog->buildblock->sz=128;
+			prog->buildblock->len=0;
+			prog->buildblock->tokens=malloc(prog->buildblock->sz*sizeof(token_t));
+			if(!prog->buildblock->tokens)outofmem();
+			break;
+
+		case BI_DEF:{ STACKSIZE_CHECK(2);
+			b=postl_stack_pop(prog);
+			a=postl_stack_pop(prog);
+			if(a.type!=POSTL_STR)
+				RETURN_WITH_ERROR("postl: First argument to 'def' should be string, is %s",
+					valtype_string(a.type));
+			if(b.type!=POSTL_BLOCK)
+				RETURN_WITH_ERROR("postl: Second argument to 'def' should be block, is %s",
+					valtype_string(b.type));
+			int h=namehash(a.strv);
+			funcmap_llitem_t *lli=malloc(sizeof(funcmap_llitem_t));
+			if(!lli)outofmem();
+			lli->item.name=a.strv;
+			lli->item.cfunc=NULL;
+			lli->item.code=*b.blockv;
+			lli->next=prog->fmap[h];
+			prog->fmap[h]=lli;
+			//postl_stackval_release(prog,a); //values were copied to function definition
+			//postl_stackval_release(prog,b);
+			break;
+		}
+
+		case BI_SWAP:{ STACKSIZE_CHECK(2);
+			stackitem_t *bsi=prog->stack;
+			prog->stack=prog->stack->next;
+			stackitem_t *asi=prog->stack;
+			prog->stack=prog->stack->next;
+			bsi->next=prog->stack;
+			prog->stack=bsi;
+			asi->next=prog->stack;
+			prog->stack=asi;
+			break;
+		}
+
+		case BI_DUP: STACKSIZE_CHECK(1);
+			postl_stack_push(prog,prog->stack->val);
+			break;
+
+		case BI_STACKDUMP:
+			for(stackitem_t *si=prog->stack;si;si=si->next){
+				switch(si->val.type){
+					case POSTL_NUM:
+						printf("%lf",si->val.numv);
+						break;
+					case POSTL_STR:
+						pprintstr(si->val.strv);
+						break;
+					case POSTL_BLOCK:{
+						token_t *tokens=si->val.blockv->tokens;
+						printf("{ ");
+						for(int i=0;i<si->val.blockv->len;i++){
+							if(tokens[i].type==TT_STR)pprintstr(tokens[i].str);
+							else printf("%s",tokens[i].str);
+							putchar(' ');
+						}
+						putchar('}');
+						break;
+					}
+				}
+				if(si->next)printf("  ");
+			}
+			putchar('\n');
 			break;
 
 		default:
