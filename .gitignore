@@ -1,0 +1,6 @@
+*.dylib
+*.a
+*.o
+*.dSYM
+postl
+test/testfile

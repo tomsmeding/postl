@@ -1,0 +1,5 @@
+"vecnorm" {
+	dup * swap dup * + sqrt
+} def
+
+3 4 vecnorm print  # 5
