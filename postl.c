@@ -9,6 +9,8 @@
 
 #include "postl.h"
 
+#define malloc(n,t) (t*)malloc((n)*sizeof(t))
+
 #if 0
 #define DBG(...) __VA_ARGS__
 #else
@@ -189,7 +191,7 @@ static int tokenise(token_t **tokensp,const char *source){
 	*tokensp=NULL; // precaution
 	int sourcelen=strlen(source);
 	int sz=128,len=0;
-	token_t *tokens=malloc(sz*sizeof(token_t));
+	token_t *tokens=malloc(sz,token_t);
 	if(!tokens)outofmem();
 
 #define DESTROY_TOKENS_RET_MIN1 do {for(int i=0;i<len;i++)free(tokens[i].str); free(tokens); return -1;} while(0)
@@ -208,7 +210,7 @@ static int tokenise(token_t **tokensp,const char *source){
 
 			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
 			tokens[len].type=TT_NUM;
-			tokens[len].str=malloc(numlen+1);
+			tokens[len].str=malloc(numlen+1,char);
 			if(!tokens[len].str)outofmem();
 			memcpy(tokens[len].str,source+i,numlen);
 			tokens[len].str[numlen]='\0';
@@ -226,7 +228,7 @@ static int tokenise(token_t **tokensp,const char *source){
 
 			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
 			tokens[len].type=TT_STR;
-			tokens[len].str=malloc(slen+1);
+			tokens[len].str=malloc(slen+1,char);
 			if(!tokens[len].str)outofmem();
 			int k=0;
 			for(j=i;;j++){
@@ -265,7 +267,7 @@ static int tokenise(token_t **tokensp,const char *source){
 
 			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
 			tokens[len].type=isppc?TT_PPC:TT_WORD;
-			tokens[len].str=malloc(wordlen+1);
+			tokens[len].str=malloc(wordlen+1,char);
 			if(!tokens[len].str)outofmem();
 			memcpy(tokens[len].str,source+i,wordlen);
 			tokens[len].str[wordlen]='\0';
@@ -274,7 +276,7 @@ static int tokenise(token_t **tokensp,const char *source){
 		} else /*if(strchr("+*-/%~&|><={}",source[i])!=NULL)*/{
 			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
 			tokens[len].type=TT_SYMBOL;
-			tokens[len].str=malloc(2);
+			tokens[len].str=malloc(2,char);
 			if(!tokens[len].str)outofmem(); //rlly
 			tokens[len].str[0]=source[i];
 			tokens[len].str[1]='\0';
@@ -309,7 +311,7 @@ static const char* execute_token(postl_program_t *prog,token_t token){
 			if(!bb->tokens[bb->len].str)outofmem();
 			bb->len++;
 
-			stackitem_t *si=malloc(sizeof(stackitem_t));
+			stackitem_t *si=malloc(1,stackitem_t);
 			if(!si)outofmem();
 			si->val.type=POSTL_BLOCK;
 			si->val.strv=NULL;
@@ -336,7 +338,7 @@ static const char* execute_token(postl_program_t *prog,token_t token){
 	switch(token.type){
 		case TT_NUM:{
 			double d=strtod(token.str,NULL);
-			stackitem_t *si=malloc(sizeof(stackitem_t));
+			stackitem_t *si=malloc(1,stackitem_t);
 			si->val.type=POSTL_NUM;
 			si->val.numv=d;
 			si->val.strv=NULL;
@@ -347,7 +349,7 @@ static const char* execute_token(postl_program_t *prog,token_t token){
 			break;
 		}
 		case TT_STR:{
-			stackitem_t *si=malloc(sizeof(stackitem_t));
+			stackitem_t *si=malloc(1,stackitem_t);
 			si->val.type=POSTL_STR;
 			asprintf(&si->val.strv,"%s",token.str);
 			if(!si->val.strv)outofmem();
@@ -426,7 +428,7 @@ static bool builtins_hmap_initialised=false;
 
 static void builtin_add(const char *name,builtin_enum_t id){
 	int h=namehash(name);
-	builtin_llitem_t *lli=malloc(sizeof(builtin_llitem_t));
+	builtin_llitem_t *lli=malloc(1,builtin_llitem_t);
 	if(!lli)outofmem();
 	lli->id=id;
 	lli->name=name;
@@ -601,11 +603,11 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 
 		case BI_BLOCKOPEN:
 			assert(!prog->buildblock);
-			code_t *bb=prog->buildblock=malloc(sizeof(code_t));
+			code_t *bb=prog->buildblock=malloc(1,code_t);
 			if(!bb)outofmem();
 			bb->sz=128;
 			bb->len=1;  // for the scopeenter
-			bb->tokens=malloc(bb->sz*sizeof(token_t));
+			bb->tokens=malloc(bb->sz,token_t);
 			if(!bb->tokens)outofmem();
 			bb->tokens[0].type=TT_WORD;
 			asprintf(&bb->tokens[0].str,"scopeenter");
@@ -655,7 +657,7 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			} else if(prog->scopestack){
 				// The name was not declared in this scope, and we're not in global scope; add
 				// the name to the scope's var list
-				name_llitem_t *nlli=malloc(sizeof(name_llitem_t));
+				name_llitem_t *nlli=malloc(1,name_llitem_t);
 				if(!nlli)outofmem();
 				asprintf(&nlli->name,"%s",b.strv);
 				if(!nlli->name)outofmem();
@@ -669,13 +671,13 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 					postl_stackval_release(b);
 					RETURN_WITH_ERROR("postl: [DBG] Invalid a.type in BI_DEF: %d",a.type);
 				}
-				funcmap_llitem_t *lli=malloc(sizeof(funcmap_llitem_t));
+				funcmap_llitem_t *lli=malloc(1,funcmap_llitem_t);
 				if(!lli)outofmem();
 				lli->item.name=b.strv;
 				lli->item.cfunc=NULL;
 				lli->item.code.sz=1;
 				lli->item.code.len=1;
-				lli->item.code.tokens=malloc(sizeof(token_t));
+				lli->item.code.tokens=malloc(1,token_t);
 				if(!lli->item.code.tokens)outofmem();
 				token_t *token=lli->item.code.tokens;
 				switch(a.type){
@@ -697,7 +699,7 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 				lli->next=prog->fmap[h];
 				prog->fmap[h]=lli;
 			} else {
-				funcmap_llitem_t *lli=malloc(sizeof(funcmap_llitem_t));
+				funcmap_llitem_t *lli=malloc(1,funcmap_llitem_t);
 				if(!lli)outofmem();
 				lli->item.name=b.strv;
 				lli->item.cfunc=NULL;
@@ -888,7 +890,7 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			break;
 
 		case BI_SCOPEENTER:{
-			scope_frame_t *frame=malloc(sizeof(scope_frame_t));
+			scope_frame_t *frame=malloc(1,scope_frame_t);
 			if(!frame)outofmem();
 			for(int h=0;h<HASHMAP_SIZE;h++)frame->vars[h]=NULL;
 			frame->next=prog->scopestack;
@@ -937,7 +939,7 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 
 postl_program_t* postl_makeprogram(void){
 	DBGF("postl_makeprogram()");
-	postl_program_t *prog=malloc(sizeof(postl_program_t));
+	postl_program_t *prog=malloc(1,postl_program_t);
 	if(!prog)outofmem();
 	prog->stack=NULL;
 	prog->stacksz=0;
@@ -946,14 +948,14 @@ postl_program_t* postl_makeprogram(void){
 	}
 
 	int h=namehash(GLOBALCODE_FUNCNAME);
-	prog->fmap[h]=malloc(sizeof(funcmap_llitem_t));
+	prog->fmap[h]=malloc(1,funcmap_llitem_t);
 	if(!prog->fmap[h])outofmem();
 
 	prog->fmap[h]->next=NULL;
 
 	int len=strlen(GLOBALCODE_FUNCNAME);
 	funcmap_item_t *item=&prog->fmap[h]->item;
-	item->name=malloc(len+1);
+	item->name=malloc(len+1,char);
 	if(!item->name)outofmem();
 	memcpy(item->name,GLOBALCODE_FUNCNAME,len+1);
 
@@ -961,7 +963,7 @@ postl_program_t* postl_makeprogram(void){
 
 	item->code.sz=128;
 	item->code.len=0;
-	item->code.tokens=malloc(item->code.sz*sizeof(token_t));
+	item->code.tokens=malloc(item->code.sz,token_t);
 	if(!item->code.tokens)outofmem();
 
 	/*for(int i=0;i<HASHMAP_SIZE;i++){
@@ -982,9 +984,9 @@ void postl_register(postl_program_t *prog,const char *name,void (*func)(postl_pr
 	DBGF("postl_register(%p,%s,%p)",prog,name,func);
 	int h=namehash(name);
 	int len=strlen(name);
-	funcmap_llitem_t *llitem=malloc(sizeof(funcmap_llitem_t));
+	funcmap_llitem_t *llitem=malloc(1,funcmap_llitem_t);
 	if(!llitem)outofmem();
-	llitem->item.name=malloc(len+1);
+	llitem->item.name=malloc(len+1,char);
 	if(!llitem->item.name)outofmem();
 	memcpy(llitem->item.name,name,len+1);
 	llitem->item.cfunc=func;
@@ -1033,7 +1035,7 @@ postl_stackval_t postl_stackval_makenum(double num){
 postl_stackval_t postl_stackval_makestr(const char *str){
 	DBGF("postl_stackval_makestr(%s)",str);
 	int len=strlen(str);
-	postl_stackval_t st={.type=POSTL_STR,.strv=malloc(len+1)};
+	postl_stackval_t st={.type=POSTL_STR,.strv=malloc(len+1,char)};
 	if(!st.strv)outofmem();
 	memcpy(st.strv,str,len+1);
 	return st;
@@ -1046,7 +1048,7 @@ int postl_stack_size(postl_program_t *prog){
 
 void postl_stack_push(postl_program_t *prog,postl_stackval_t val){
 	DBGF("postl_stack_push(%p,{type=%d,...})",prog,val.type);
-	stackitem_t *si=malloc(sizeof(stackitem_t));
+	stackitem_t *si=malloc(1,stackitem_t);
 	if(!si)outofmem();
 	si->val.type=val.type;
 	si->val.numv=val.numv;
@@ -1056,7 +1058,7 @@ void postl_stack_push(postl_program_t *prog,postl_stackval_t val){
 			exit(1);
 		}
 		int len=strlen(val.strv);
-		si->val.strv=malloc(len+1);
+		si->val.strv=malloc(len+1,char);
 		if(!si->val.strv)outofmem();
 		memcpy(si->val.strv,val.strv,len+1);
 	} else si->val.strv=NULL;
@@ -1065,11 +1067,11 @@ void postl_stack_push(postl_program_t *prog,postl_stackval_t val){
 			fprintf(stderr,"postl: NULL block in stack value to postl_stack_push\n");
 			exit(1);
 		}
-		code_t *code=malloc(sizeof(code_t));
+		code_t *code=malloc(1,code_t);
 		if(!code)outofmem();
 		code->sz=val.blockv->sz;
 		code->len=val.blockv->len;
-		code->tokens=malloc(code->sz*sizeof(token_t));
+		code->tokens=malloc(code->sz,token_t);
 		if(!code->tokens)outofmem();
 		for(int i=0;i<code->len;i++){
 			code->tokens[i].type=val.blockv->tokens[i].type;
