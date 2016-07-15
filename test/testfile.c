@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
 #include <math.h>
 #include "../postl.h"
 
@@ -17,6 +19,34 @@ char* readfile(const char *fname){
 	if(ferror(f)){fclose(f); free(buf); return NULL;}
 	buf[flen]='\0';
 	fclose(f);
+	return buf;
+}
+
+char *readstdin(void){
+	int bufsz=1024,cursor=0;
+	char *buf=malloc(bufsz);
+	if(!buf)return NULL;
+	while(true){
+		if(cursor==bufsz-1){
+			bufsz*=2;
+			char *newbuf=realloc(buf,bufsz);
+			if(!newbuf){
+				free(buf);
+				return NULL;
+			}
+			buf=newbuf;
+		}
+		int nread=fread(buf,1,bufsz-cursor-1,stdin);
+		cursor+=nread;
+		if(nread<bufsz-cursor-1){
+			if(feof(stdin))break;
+			if(ferror(stdin)){
+				free(buf);
+				return NULL;
+			}
+		}
+	}
+	buf[cursor]='\0';
 	return buf;
 }
 
@@ -40,7 +70,20 @@ int main(int argc,char **argv){
 		fprintf(stderr,"Pass postl file as command-line argument\n");
 		return 1;
 	}
-	char *source=readfile(argv[1]);
+	char *source;
+	if(strcmp(argv[1],"-")==0){
+		source=readstdin();
+		if(!source){
+			fprintf(stderr,"Cannot read from stdin\n");
+			return 1;
+		}
+	} else {
+		source=readfile(argv[1]);
+		if(!source){
+			fprintf(stderr,"Cannot read file '%s'\n",argv[1]);
+			return 1;
+		}
+	}
 
 	const char *errstr;
 
