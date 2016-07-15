@@ -2,8 +2,6 @@
 
 {"\n" print} "lf" def
 
-{1 swap {pop 0} if} "!" def
-
 {"__block" def __block} "eval" def
 
 {

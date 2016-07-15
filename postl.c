@@ -347,6 +347,7 @@ static bool deletefunction(postl_program_t *prog,const char *name){
 typedef enum builtin_enum_t{
 	BI_PLUS, BI_MINUS, BI_TIMES, BI_DIVIDE, BI_MODULO,
 	BI_EQ, BI_GT, BI_LT,
+	BI_NOT,
 	BI_PRINT,
 	BI_BLOCKOPEN, /*BI_BLOCKCLOSE,*/ //blockclose is directly handled by execute_token
 	BI_DEF,
@@ -387,6 +388,7 @@ static void initialise_builtins_hmap(void){
 	builtin_add("=",         BI_EQ);
 	builtin_add(">",         BI_GT);
 	builtin_add("<",         BI_LT);
+	builtin_add("!",         BI_NOT);
 	builtin_add("print",     BI_PRINT);
 	builtin_add("{",         BI_BLOCKOPEN);
 	builtin_add("def",       BI_DEF);
@@ -519,6 +521,22 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 		BINARY_ARITH_OP(BI_EQ,a.numv==b.numv)
 		BINARY_ARITH_OP(BI_GT,a.numv>b.numv)
 		BINARY_ARITH_OP(BI_LT,a.numv<b.numv)
+
+		case BI_NOT: STACKSIZE_CHECK(1);
+			a=postl_stack_pop(prog);
+			b.type=POSTL_NUM;
+			switch(a.type){
+				case POSTL_NUM: b.numv=a.numv==0; break;
+				case POSTL_STR: b.numv=a.strv[0]=='\0'; break;
+				case POSTL_BLOCK: b.numv=0; break;
+				default:
+					postl_stackval_release(a);
+					RETURN_WITH_ERROR("postl: Condition has invalid type %s in '!'",
+						valtype_string(a.type));
+			}
+			postl_stackval_release(a);
+			postl_stack_push(prog,b);
+			break;
 
 		case BI_PRINT: STACKSIZE_CHECK(1);
 			a=postl_stack_pop(prog);
