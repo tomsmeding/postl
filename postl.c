@@ -157,7 +157,7 @@ static int tokenise(token_t **tokensp,const char *source){
 			int numlen=endp-(source+i);
 			if(isnan(nval)||isinf(nval)||numlen<=0)DESTROY_TOKENS_RET_MIN1;
 
-			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz))==NULL)outofmem();
+			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
 			tokens[len].type=TT_NUM;
 			tokens[len].str=malloc(numlen+1);
 			if(!tokens[len].str)outofmem();
@@ -175,7 +175,7 @@ static int tokenise(token_t **tokensp,const char *source){
 			}
 			if(j==sourcelen)DESTROY_TOKENS_RET_MIN1;
 
-			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz))==NULL)outofmem();
+			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
 			tokens[len].type=TT_STR;
 			tokens[len].str=malloc(slen+1);
 			if(!tokens[len].str)outofmem();
@@ -214,7 +214,7 @@ static int tokenise(token_t **tokensp,const char *source){
 			}
 			int wordlen=j-i;
 
-			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz))==NULL)outofmem();
+			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
 			tokens[len].type=isppc?TT_PPC:TT_WORD;
 			tokens[len].str=malloc(wordlen+1);
 			if(!tokens[len].str)outofmem();
@@ -223,7 +223,7 @@ static int tokenise(token_t **tokensp,const char *source){
 			len++;
 			i=j-1;
 		} else /*if(strchr("+*-/%~&|><={}",source[i])!=NULL)*/{
-			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz))==NULL)outofmem();
+			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
 			tokens[len].type=TT_SYMBOL;
 			tokens[len].str=malloc(2);
 			if(!tokens[len].str)outofmem(); //rlly
@@ -831,7 +831,7 @@ const char* postl_addcode(postl_program_t *prog,const char *source){
 	code_t *code=&prog->fmap[namehash(GLOBALCODE_FUNCNAME)]->item.code;
 	if(code->len+len>code->sz){
 		code->sz=code->len+len+16;
-		code->tokens=realloc(code->tokens,code->sz);
+		code->tokens=realloc(code->tokens,code->sz*sizeof(token_t));
 		if(!code->tokens)outofmem();
 	}
 	memcpy(code->tokens+code->len,tokens,len*sizeof(token_t));
