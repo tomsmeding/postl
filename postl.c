@@ -408,6 +408,7 @@ typedef enum builtin_enum_t{
 	BI_BLOCKOPEN, /*BI_BLOCKCLOSE,*/ //blockclose is directly handled by execute_token
 	BI_DEF, BI_GDEF,
 	BI_EVAL,
+	BI_BUILTIN,
 	BI_SWAP, BI_DUP, BI_POP, BI_ROLL, BI_ROTATE,
 	BI_IF, BI_WHILE, BI_IFELSE,
 	BI_STACKSIZE,
@@ -452,6 +453,7 @@ static void initialise_builtins_hmap(void){
 	builtin_add("def",       BI_DEF);
 	builtin_add("gdef",      BI_GDEF);
 	builtin_add("eval",      BI_EVAL);
+	builtin_add("builtin",   BI_BUILTIN);
 	builtin_add("swap",      BI_SWAP);
 	builtin_add("dup",       BI_DUP);
 	builtin_add("pop",       BI_POP);
@@ -722,6 +724,22 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			postl_stackval_release(a);
 			if(errstr)return errstr;
 			break;
+
+		case BI_BUILTIN:{ STACKSIZE_CHECK(1);
+			a=postl_stack_pop(prog);
+			if(a.type!=POSTL_STR){
+				postl_stackval_release(a);
+				CANNOT_USE(a.type);
+			}
+			bool found=false;
+			const char *errstr=execute_builtin(prog,a.strv,&found);
+			postl_stackval_release(a);
+			if(errstr)return errstr;
+			if(!found)
+				RETURN_WITH_ERROR("postl: Builtin '%s' not found in builtin 'builtin'",
+					a.strv);
+			break;
+		}
 
 		case BI_SWAP:{ STACKSIZE_CHECK(2);
 			stackitem_t *bsi=prog->stack,*asi=bsi->next;
