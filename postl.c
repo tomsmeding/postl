@@ -148,6 +148,31 @@ static bool istruthy(postl_stackval_t val){
 }
 
 
+static void printstackval(postl_stackval_t val,bool pretty){
+	switch(val.type){
+		case POSTL_NUM:
+			printf("%g",val.numv);
+			break;
+		case POSTL_STR:
+			if(pretty)pprintstr(val.strv);
+			else printf("%s",val.strv);
+			break;
+		case POSTL_BLOCK:{
+			token_t *tokens=val.blockv->tokens;
+			printf("{ ");
+			for(int i=0;i<val.blockv->len;i++){
+				if(tokens[i].type==TT_STR)pprintstr(tokens[i].str);
+				else printf("%s",tokens[i].str);
+				putchar(' ');
+			}
+			putchar('}');
+			break;
+		}
+	}
+	fflush(stdout);
+}
+
+
 static void funcmap_item_release(funcmap_item_t item){
 	free(item.name);
 	if(item.code.sz!=0){
@@ -555,17 +580,7 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 
 		case BI_PRINT: STACKSIZE_CHECK(1);
 			a=postl_stack_pop(prog);
-			switch(a.type){
-				case POSTL_NUM:
-					printf("%g",a.numv); fflush(stdout);
-					break;
-				case POSTL_STR:
-					printf("%s",a.strv); fflush(stdout);
-					break;
-				default:
-					postl_stackval_release(a);
-					CANNOT_USE(a.type);
-			}
+			printstackval(a,false);
 			postl_stackval_release(a);
 			break;
 
@@ -824,25 +839,7 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 
 		case BI_STACKDUMP:
 			for(stackitem_t *si=prog->stack;si;si=si->next){
-				switch(si->val.type){
-					case POSTL_NUM:
-						printf("%g",si->val.numv);
-						break;
-					case POSTL_STR:
-						pprintstr(si->val.strv);
-						break;
-					case POSTL_BLOCK:{
-						token_t *tokens=si->val.blockv->tokens;
-						printf("{ ");
-						for(int i=0;i<si->val.blockv->len;i++){
-							if(tokens[i].type==TT_STR)pprintstr(tokens[i].str);
-							else printf("%s",tokens[i].str);
-							putchar(' ');
-						}
-						putchar('}');
-						break;
-					}
-				}
+				printstackval(si->val,true);
 				if(si->next)printf("  ");
 			}
 			putchar('\n');
