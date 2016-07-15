@@ -299,11 +299,21 @@ static const char* execute_token(postl_program_t *prog,token_t token){
 	)
 	if(prog->buildblock){
 		if(strcmp(token.str,"}")==0&&--prog->blockdepth==0){
+			code_t *bb=prog->buildblock;
+			if(bb->len==bb->sz){
+				bb->sz++;
+				bb->tokens=realloc(bb->tokens,bb->sz*sizeof(token_t));
+			}
+			bb->tokens[bb->len].type=TT_WORD;
+			asprintf(&bb->tokens[bb->len].str,"scopeleave");
+			if(!bb->tokens[bb->len].str)outofmem();
+			bb->len++;
+
 			stackitem_t *si=malloc(sizeof(stackitem_t));
 			if(!si)outofmem();
 			si->val.type=POSTL_BLOCK;
 			si->val.strv=NULL;
-			si->val.blockv=prog->buildblock;
+			si->val.blockv=bb;
 			prog->buildblock=NULL;
 			si->next=prog->stack;
 			prog->stack=si;
@@ -590,12 +600,15 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 
 		case BI_BLOCKOPEN:
 			assert(!prog->buildblock);
-			prog->buildblock=malloc(sizeof(code_t));
-			if(!prog->buildblock)outofmem();
-			prog->buildblock->sz=128;
-			prog->buildblock->len=0;
-			prog->buildblock->tokens=malloc(prog->buildblock->sz*sizeof(token_t));
-			if(!prog->buildblock->tokens)outofmem();
+			code_t *bb=prog->buildblock=malloc(sizeof(code_t));
+			if(!bb)outofmem();
+			bb->sz=128;
+			bb->len=1;  // for the scopeenter
+			bb->tokens=malloc(bb->sz*sizeof(token_t));
+			if(!bb->tokens)outofmem();
+			bb->tokens[0].type=TT_WORD;
+			asprintf(&bb->tokens[0].str,"scopeenter");
+			if(!bb->tokens[0].str)outofmem();
 			prog->blockdepth=1;
 			break;
 
