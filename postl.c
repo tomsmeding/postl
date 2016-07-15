@@ -114,13 +114,27 @@ typedef struct var_llitem_t{
 } var_llitem_t;*/
 
 
+typedef struct name_llitem_t{
+	char *name;
+	struct name_llitem_t *next;
+} name_llitem_t;
+
+typedef struct scope_frame_t{
+	name_llitem_t *vars[HASHMAP_SIZE];
+	struct scope_frame_t *next;
+} scope_frame_t;
+
+
 struct postl_program_t{
 	stackitem_t *stack;
 	int stacksz;
-	funcmap_llitem_t *fmap[HASHMAP_SIZE];
+	funcmap_llitem_t *fmap[HASHMAP_SIZE]; // the same function might appear multiple times after another,
+	                                      // meaning it appears in multiple stacked scopes (the first
+	                                      // appearance is always active)
 	//var_llitem_t *vmap[HASHMAP_SIZE];
 	code_t *buildblock; // !NULL iff collecting tokens in a { block }
 	int blockdepth;
+	scope_frame_t *scopestack;
 };
 
 
@@ -231,6 +245,7 @@ static int tokenise(token_t **tokensp,const char *source){
 			tokens[len].str[1]='\0';
 			len++;
 		} //else DESTROY_TOKENS_RET_MIN1;
+		DBGF("i=%d, len=%d; tokens[%d].type=%d",i,len,len==0?-123:len-1,tokens[len==0?-123:len-1].type);
 	}
 
 #undef DESTROY_TOKENS_RET_MIN1
@@ -240,6 +255,13 @@ static int tokenise(token_t **tokensp,const char *source){
 }
 
 static const char* execute_token(postl_program_t *prog,token_t token){
+	DBG(
+		code_t *code=&prog->fmap[53]->item.code;
+		for(int i=0;i<code->len;i++){
+			// DBGF("tokens[%d]={type=%d, str=%s}",i,code->tokens[i].type,code->tokens[i].str);
+			if(code->tokens[i].str==NULL)__asm("int3\n\t");
+		}
+	)
 	if(prog->buildblock){
 		if(strcmp(token.str,"}")==0&&--prog->blockdepth==0){
 			stackitem_t *si=malloc(sizeof(stackitem_t));
@@ -299,6 +321,29 @@ static const char* execute_token(postl_program_t *prog,token_t token){
 	return NULL;
 }
 
+// returns whether the function existed
+static bool deletefunction(postl_program_t *prog,const char *name){
+	int h=namehash(name);
+	funcmap_llitem_t *lli=prog->fmap[h],*parent=NULL;
+	while(lli){
+		if(strcmp(lli->item.name,name)==0)break;
+		parent=lli;
+		lli=lli->next;
+	}
+	if(!lli)return false;
+	if(parent==NULL)prog->fmap[h]=lli->next;
+	else parent->next=lli->next;
+	free(lli->item.name);
+	if(lli->item.code.sz){
+		for(int i=0;i<lli->item.code.len;i++){
+			free(lli->item.code.tokens[i].str);
+		}
+		free(lli->item.code.tokens);
+	}
+	free(lli);
+	return true;
+}
+
 typedef enum builtin_enum_t{
 	BI_PLUS, BI_MINUS, BI_TIMES, BI_DIVIDE, BI_MODULO,
 	BI_EQ, BI_GT, BI_LT,
@@ -310,7 +355,8 @@ typedef enum builtin_enum_t{
 	BI_STACKSIZE,
 	BI_STACKDUMP,
 	BI_CEIL, BI_FLOOR, BI_ROUND, BI_MIN, BI_MAX, BI_ABS, BI_SQRT, BI_EXP, BI_LOG, BI_POW,
-	BI_SIN, BI_COS, BI_TAN, BI_ASIN, BI_ACOS, BI_ATAN, BI_ATAN2, BI_E, BI_PI
+	BI_SIN, BI_COS, BI_TAN, BI_ASIN, BI_ACOS, BI_ATAN, BI_ATAN2, BI_E, BI_PI,
+	BI_SCOPEENTER, BI_SCOPELEAVE
 } builtin_enum_t;
 
 typedef struct builtin_llitem_t {
@@ -333,45 +379,47 @@ static void builtin_add(const char *name,builtin_enum_t id){
 }
 
 static void initialise_builtins_hmap(void){
-	builtin_add("+",        BI_PLUS);
-	builtin_add("-",        BI_MINUS);
-	builtin_add("*",        BI_TIMES);
-	builtin_add("/",        BI_DIVIDE);
-	builtin_add("%",        BI_MODULO);
-	builtin_add("=",        BI_EQ);
-	builtin_add(">",        BI_GT);
-	builtin_add("<",        BI_LT);
-	builtin_add("print",    BI_PRINT);
-	builtin_add("{",        BI_BLOCKOPEN);
-	builtin_add("def",      BI_DEF);
-	builtin_add("swap",     BI_SWAP);
-	builtin_add("dup",      BI_DUP);
-	builtin_add("pop",      BI_POP);
-	builtin_add("roll",     BI_ROLL);
-	builtin_add("rotate",   BI_ROTATE);
-	builtin_add("if",       BI_IF);
-	builtin_add("while",    BI_WHILE);
-	builtin_add("stacksize",BI_STACKSIZE);
-	builtin_add("stackdump",BI_STACKDUMP);
-	builtin_add("ceil",     BI_CEIL);
-	builtin_add("floor",    BI_FLOOR);
-	builtin_add("round",    BI_ROUND);
-	builtin_add("min",      BI_MIN);
-	builtin_add("max",      BI_MAX);
-	builtin_add("abs",      BI_ABS);
-	builtin_add("sqrt",     BI_SQRT);
-	builtin_add("exp",      BI_EXP);
-	builtin_add("log",      BI_LOG);
-	builtin_add("pow",      BI_POW);
-	builtin_add("sin",      BI_SIN);
-	builtin_add("cos",      BI_COS);
-	builtin_add("tan",      BI_TAN);
-	builtin_add("asin",     BI_ASIN);
-	builtin_add("acos",     BI_ACOS);
-	builtin_add("atan",     BI_ATAN);
-	builtin_add("atan2",    BI_ATAN2);
-	builtin_add("E",        BI_E);
-	builtin_add("PI",       BI_PI);
+	builtin_add("+",         BI_PLUS);
+	builtin_add("-",         BI_MINUS);
+	builtin_add("*",         BI_TIMES);
+	builtin_add("/",         BI_DIVIDE);
+	builtin_add("%",         BI_MODULO);
+	builtin_add("=",         BI_EQ);
+	builtin_add(">",         BI_GT);
+	builtin_add("<",         BI_LT);
+	builtin_add("print",     BI_PRINT);
+	builtin_add("{",         BI_BLOCKOPEN);
+	builtin_add("def",       BI_DEF);
+	builtin_add("swap",      BI_SWAP);
+	builtin_add("dup",       BI_DUP);
+	builtin_add("pop",       BI_POP);
+	builtin_add("roll",      BI_ROLL);
+	builtin_add("rotate",    BI_ROTATE);
+	builtin_add("if",        BI_IF);
+	builtin_add("while",     BI_WHILE);
+	builtin_add("stacksize", BI_STACKSIZE);
+	builtin_add("stackdump", BI_STACKDUMP);
+	builtin_add("ceil",      BI_CEIL);
+	builtin_add("floor",     BI_FLOOR);
+	builtin_add("round",     BI_ROUND);
+	builtin_add("min",       BI_MIN);
+	builtin_add("max",       BI_MAX);
+	builtin_add("abs",       BI_ABS);
+	builtin_add("sqrt",      BI_SQRT);
+	builtin_add("exp",       BI_EXP);
+	builtin_add("log",       BI_LOG);
+	builtin_add("pow",       BI_POW);
+	builtin_add("sin",       BI_SIN);
+	builtin_add("cos",       BI_COS);
+	builtin_add("tan",       BI_TAN);
+	builtin_add("asin",      BI_ASIN);
+	builtin_add("acos",      BI_ACOS);
+	builtin_add("atan",      BI_ATAN);
+	builtin_add("atan2",     BI_ATAN2);
+	builtin_add("E",         BI_E);
+	builtin_add("PI",        BI_PI);
+	builtin_add("scopeenter",BI_SCOPEENTER);
+	builtin_add("scopeleave",BI_SCOPELEAVE);
 
 	builtins_hmap_initialised=true;
 }
@@ -510,8 +558,20 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			}
 			int h=namehash(b.strv);
 
-			//First lookup the name in the function table, it might need to be deleted
-			{
+			bool thisscope=true; // Whether this name is in the top scope; if so, we need to delete it
+			                     // upon setting the new value
+			if(prog->scopestack){
+				name_llitem_t *nlli=prog->scopestack->vars[h];
+				while(nlli){
+					if(strcmp(nlli->name,b.strv)==0)break;
+					nlli=nlli->next;
+				}
+				thisscope=(bool)nlli;
+			}
+
+			DBGF("[def]: b.strv='%s'; thisscope=%d\n",b.strv,thisscope);
+			if(thisscope){
+				// Lookup the name in the function table, it might still need to be deleted
 				funcmap_llitem_t *lli=prog->fmap[h],*parent=NULL;
 				while(lli){
 					if(strcmp(lli->item.name,b.strv)==0)break;
@@ -524,6 +584,15 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 					funcmap_item_release(lli->item);
 					free(lli);
 				}
+			} else if(prog->scopestack){
+				// The name was not declared in this scope, and we're not in global scope; add
+				// the name to the scope's var list
+				name_llitem_t *nlli=malloc(sizeof(name_llitem_t));
+				if(!nlli)outofmem();
+				asprintf(&nlli->name,"%s",b.strv);
+				if(!nlli->name)outofmem();
+				nlli->next=prog->scopestack->vars[h];
+				prog->scopestack->vars[h]=nlli;
 			}
 
 			if(a.type!=POSTL_BLOCK){
@@ -740,6 +809,36 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			postl_stack_push(prog,postl_stackval_makenum(M_PI));
 			break;
 
+		case BI_SCOPEENTER:{
+			scope_frame_t *frame=malloc(sizeof(scope_frame_t));
+			if(!frame)outofmem();
+			for(int h=0;h<HASHMAP_SIZE;h++)frame->vars[h]=NULL;
+			frame->next=prog->scopestack;
+			prog->scopestack=frame;
+			break;
+		}
+
+		case BI_SCOPELEAVE:{
+			scope_frame_t *frame=prog->scopestack;
+			if(!frame){
+				snprintf(errbuf,256,"postl: scopeleave on empty scope stack");
+				return errbuf;
+			}
+			prog->scopestack=frame->next;
+			for(int h=0;h<HASHMAP_SIZE;h++){
+				DBG(if(frame->vars[h])DBGF("h=%d:",h);)
+				while(frame->vars[h]){
+					DBGF("- '%s'",frame->vars[h]->name);
+					deletefunction(prog,frame->vars[h]->name);
+					free(frame->vars[h]->name);
+					name_llitem_t *next=frame->vars[h]->next;
+					free(frame->vars[h]);
+					frame->vars[h]=next;
+				}
+			}
+			break;
+		}
+
 		default:
 			snprintf(errbuf,256,"postl: Sorry, not implemented: builtin '%s'",name);
 			return errbuf;
@@ -793,6 +892,8 @@ postl_program_t* postl_makeprogram(void){
 
 	prog->buildblock=NULL;
 	prog->blockdepth=0; //not strictly necessary as buildblock==NULL conveys the message, but still
+
+	prog->scopestack=NULL;
 
 	initialise_builtins_hmap();
 
@@ -893,6 +994,7 @@ void postl_stack_push(postl_program_t *prog,postl_stackval_t val){
 		code->tokens=malloc(code->sz*sizeof(token_t));
 		if(!code->tokens)outofmem();
 		for(int i=0;i<code->len;i++){
+			code->tokens[i].type=val.blockv->tokens[i].type;
 			asprintf(&code->tokens[i].str,"%s",val.blockv->tokens[i].str);
 			if(!code->tokens[i].str)outofmem();
 		}
@@ -1056,9 +1158,23 @@ void postl_destroy(postl_program_t *prog){
 		free(prog->buildblock);
 	}
 
+	while(prog->scopestack){
+		for(int h=0;h<HASHMAP_SIZE;h++){
+			while(prog->scopestack->vars[h]){
+				name_llitem_t *lli=prog->scopestack->vars[h];
+				free(lli->name);
+				prog->scopestack->vars[h]=lli->next;
+				free(lli);
+			}
+		}
+		scope_frame_t *frame=prog->scopestack;
+		prog->scopestack=frame->next;
+		free(frame);
+	}
+
 	free(prog);
 
-	DBG(
+	/*DBG(
 		DBGF("builtins_hmap:");
 		for(int h=0;h<HASHMAP_SIZE;h++){
 			if(builtins_hmap[h])DBGF("- h=%d:",h);
@@ -1068,5 +1184,5 @@ void postl_destroy(postl_program_t *prog){
 				lli=lli->next;
 			}
 		}
-	)
+	)*/
 }
