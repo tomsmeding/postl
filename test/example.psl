@@ -1,19 +1,19 @@
-"lf" {
+{
 	"\n" print
-} def
+} "lf" def
 
-"vecnorm" {
+{
 	dup * swap dup * + sqrt
-} stackdump def
+} "vecnorm" stackdump def
 
-"clearstack" {
+{
 	stacksize { pop stacksize } while
-} def
+} "clearstack" def
 
-"reverse" {
-	"__n" swap def
-	__n 1 > { __n print lf __n -1 rotate "__n" __n 1 - def __n 1 > } while
-} def
+{
+	"__n" def
+	__n 1 > { __n print lf __n -1 rotate __n 1 - "__n" def __n 1 > } while
+} "reverse" def
 
 3 4 vecnorm print lf  # 5
 
@@ -32,7 +32,7 @@ clearstack
 
 "stacksize=" print stacksize print lf
 
-"main" {
+{
 	"Someone called my main function! args: " print
 	stackdump
-} def
+} "main" def

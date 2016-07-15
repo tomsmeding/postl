@@ -502,19 +502,19 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 		case BI_DEF:{ STACKSIZE_CHECK(2);
 			b=postl_stack_pop(prog);
 			a=postl_stack_pop(prog);
-			if(a.type!=POSTL_STR){
+			if(b.type!=POSTL_STR){
 				postl_stackval_release(a);
 				postl_stackval_release(b);
-				RETURN_WITH_ERROR("postl: First argument to 'def' should be string, is %s",
-					valtype_string(a.type));
+				RETURN_WITH_ERROR("postl: Second argument to 'def' should be string, is %s",
+					valtype_string(b.type));
 			}
-			int h=namehash(a.strv);
+			int h=namehash(b.strv);
 
 			//First lookup the name in the function table, it might need to be deleted
 			{
 				funcmap_llitem_t *lli=prog->fmap[h],*parent=NULL;
 				while(lli){
-					if(strcmp(lli->item.name,a.strv)==0)break;
+					if(strcmp(lli->item.name,b.strv)==0)break;
 					parent=lli;
 					lli=lli->next;
 				}
@@ -526,31 +526,31 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 				}
 			}
 
-			if(b.type!=POSTL_BLOCK){
-				if(b.type!=POSTL_NUM&&b.type!=POSTL_STR){
+			if(a.type!=POSTL_BLOCK){
+				if(a.type!=POSTL_NUM&&a.type!=POSTL_STR){
 					postl_stackval_release(a);
 					postl_stackval_release(b);
-					RETURN_WITH_ERROR("postl: [DBG] Invalid b.type in BI_DEF: %d",b.type);
+					RETURN_WITH_ERROR("postl: [DBG] Invalid a.type in BI_DEF: %d",a.type);
 				}
 				funcmap_llitem_t *lli=malloc(sizeof(funcmap_llitem_t));
 				if(!lli)outofmem();
-				lli->item.name=a.strv;
+				lli->item.name=b.strv;
 				lli->item.cfunc=NULL;
 				lli->item.code.sz=1;
 				lli->item.code.len=1;
 				lli->item.code.tokens=malloc(sizeof(token_t));
 				if(!lli->item.code.tokens)outofmem();
 				token_t *token=lli->item.code.tokens;
-				switch(b.type){
+				switch(a.type){
 					case POSTL_NUM:
 						token->type=TT_NUM;
-						asprintf(&token->str,"%lf",b.numv);
+						asprintf(&token->str,"%lf",a.numv);
 						if(!token->str)outofmem();
 						break;
 
 					case POSTL_STR:
 						token->type=TT_STR;
-						asprintf(&token->str,"%s",b.strv);
+						asprintf(&token->str,"%s",a.strv);
 						if(!token->str)outofmem();
 						break;
 
@@ -562,9 +562,9 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			} else {
 				funcmap_llitem_t *lli=malloc(sizeof(funcmap_llitem_t));
 				if(!lli)outofmem();
-				lli->item.name=a.strv;
+				lli->item.name=b.strv;
 				lli->item.cfunc=NULL;
-				lli->item.code=*b.blockv;
+				lli->item.code=*a.blockv;
 				lli->next=prog->fmap[h];
 				prog->fmap[h]=lli;
 			}
