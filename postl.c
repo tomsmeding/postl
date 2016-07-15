@@ -574,13 +574,9 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 		}
 
 		case BI_SWAP:{ STACKSIZE_CHECK(2);
-			stackitem_t *bsi=prog->stack;
-			prog->stack=prog->stack->next;
-			stackitem_t *asi=prog->stack;
-			prog->stack=prog->stack->next;
-			bsi->next=prog->stack;
-			prog->stack=bsi;
-			asi->next=prog->stack;
+			stackitem_t *bsi=prog->stack,*asi=bsi->next;
+			bsi->next=asi->next;
+			asi->next=bsi;
 			prog->stack=asi;
 			break;
 		}
