@@ -26,10 +26,12 @@ __attribute__((noreturn)) static void outofmem(void){
 	exit(1);
 }
 
-
+// Murmur3 performed only slightly better (3 collisions instead of 5 for the
+// builtins) than this simple sum-of-characters.
+// Keeping this until I find something significantly better.
 static int namehash(const char *name){
 	int h=0,len=strlen(name);
-	for(int i=0;i<len;i++)h+=name[i]; // apparently works fine
+	for(int i=0;i<len;i++)h+=name[i];
 	return h%HASHMAP_SIZE;
 }
 
