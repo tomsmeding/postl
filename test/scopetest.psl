@@ -1,29 +1,5 @@
 {pop pop} "main" def
 
-{"\n" print} "lf" def
-
-{"__block" def __block} "eval" def
-
-{
-	3 1 rotate
-	1 swap
-	{pop pop eval 0} if
-	# now if there's a 1 on top, the else needs to be run; if 0, all is done.
-	{swap pop eval} if
-} "ifelse" def
-
-{
-	"__assert_name" def
-	dup eval ! {
-		"Assertion '" __assert_name + "' failed: " + print
-		-1 roll  # move the block to the back
-		stacksize 1 > {pop stacksize 1 >} while
-		stackdump
-		assert_bail
-	} if
-	pop
-} "assert" def
-
 {stacksize {pop stacksize} while} "clear" def
 
 {
@@ -49,4 +25,6 @@ scopeleave
 2 kaasis
 
 
-"ok" print
+"Should throw error: " print __target
+
+"hmmm.... Maybe fix autoscoping?" print lf

@@ -138,6 +138,16 @@ struct postl_program_t{
 };
 
 
+static bool istruthy(postl_stackval_t val){
+	switch(val.type){
+		case POSTL_NUM: return val.numv!=0; break;
+		case POSTL_STR: return val.strv[0]!='\0'; break;
+		case POSTL_BLOCK: return true; break;
+		default: assert(false);
+	}
+}
+
+
 static void funcmap_item_release(funcmap_item_t item){
 	free(item.name);
 	if(item.code.sz!=0){
@@ -321,6 +331,15 @@ static const char* execute_token(postl_program_t *prog,token_t token){
 	return NULL;
 }
 
+// maybe returns error string
+static const char* execute_block(postl_program_t *prog,code_t block){
+	for(int i=0;i<block.len;i++){
+		const char *errstr=execute_token(prog,block.tokens[i]);
+		if(errstr)return errstr;
+	}
+	return NULL;
+}
+
 // returns whether the function existed
 static bool deletefunction(postl_program_t *prog,const char *name){
 	int h=namehash(name);
@@ -348,11 +367,12 @@ typedef enum builtin_enum_t{
 	BI_PLUS, BI_MINUS, BI_TIMES, BI_DIVIDE, BI_MODULO,
 	BI_EQ, BI_GT, BI_LT,
 	BI_NOT,
-	BI_PRINT,
+	BI_PRINT, BI_LF,
 	BI_BLOCKOPEN, /*BI_BLOCKCLOSE,*/ //blockclose is directly handled by execute_token
 	BI_DEF,
+	BI_EVAL,
 	BI_SWAP, BI_DUP, BI_POP, BI_ROLL, BI_ROTATE,
-	BI_IF, BI_WHILE,
+	BI_IF, BI_WHILE, BI_IFELSE,
 	BI_STACKSIZE,
 	BI_STACKDUMP,
 	BI_CEIL, BI_FLOOR, BI_ROUND, BI_MIN, BI_MAX, BI_ABS, BI_SQRT, BI_EXP, BI_LOG, BI_POW,
@@ -390,8 +410,10 @@ static void initialise_builtins_hmap(void){
 	builtin_add("<",         BI_LT);
 	builtin_add("!",         BI_NOT);
 	builtin_add("print",     BI_PRINT);
+	builtin_add("lf",        BI_LF);
 	builtin_add("{",         BI_BLOCKOPEN);
 	builtin_add("def",       BI_DEF);
+	builtin_add("eval",      BI_EVAL);
 	builtin_add("swap",      BI_SWAP);
 	builtin_add("dup",       BI_DUP);
 	builtin_add("pop",       BI_POP);
@@ -399,6 +421,7 @@ static void initialise_builtins_hmap(void){
 	builtin_add("rotate",    BI_ROTATE);
 	builtin_add("if",        BI_IF);
 	builtin_add("while",     BI_WHILE);
+	builtin_add("ifelse",    BI_IFELSE);
 	builtin_add("stacksize", BI_STACKSIZE);
 	builtin_add("stackdump", BI_STACKDUMP);
 	builtin_add("ceil",      BI_CEIL);
@@ -525,15 +548,7 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 		case BI_NOT: STACKSIZE_CHECK(1);
 			a=postl_stack_pop(prog);
 			b.type=POSTL_NUM;
-			switch(a.type){
-				case POSTL_NUM: b.numv=a.numv==0; break;
-				case POSTL_STR: b.numv=a.strv[0]=='\0'; break;
-				case POSTL_BLOCK: b.numv=0; break;
-				default:
-					postl_stackval_release(a);
-					RETURN_WITH_ERROR("postl: Condition has invalid type %s in '!'",
-						valtype_string(a.type));
-			}
+			b.numv=!istruthy(a);
 			postl_stackval_release(a);
 			postl_stack_push(prog,b);
 			break;
@@ -552,6 +567,10 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 					CANNOT_USE(a.type);
 			}
 			postl_stackval_release(a);
+			break;
+
+		case BI_LF:
+			putchar('\n');
 			break;
 
 		case BI_BLOCKOPEN:
@@ -660,6 +679,17 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			break;
 		}
 
+		case BI_EVAL: STACKSIZE_CHECK(1);
+			a=postl_stack_pop(prog);
+			if(a.type!=POSTL_BLOCK){
+				postl_stackval_release(a);
+				CANNOT_USE(a.type);
+			}
+			const char *errstr=execute_block(prog,*a.blockv);
+			postl_stackval_release(a);
+			if(errstr)return errstr;
+			break;
+
 		case BI_SWAP:{ STACKSIZE_CHECK(2);
 			stackitem_t *bsi=prog->stack,*asi=bsi->next;
 			bsi->next=asi->next;
@@ -745,29 +775,46 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			}
 			while(true){
 				postl_stackval_t cond=postl_stack_pop(prog);
-				bool stop=false;
-				switch(cond.type){
-					case POSTL_NUM: stop=cond.numv==0; break;
-					case POSTL_STR: stop=cond.strv[0]!='\0'; break;
-					case POSTL_BLOCK: stop=false; break;
-					default:
-						postl_stackval_release(cond);
-						postl_stackval_release(body);
-						RETURN_WITH_ERROR("postl: Condition has invalid type %s in '%s'",
-							valtype_string(cond.type),name);
-				}
+				bool stop=!istruthy(cond);
 				postl_stackval_release(cond);
 				if(stop)break;
-				for(int i=0;i<body.blockv->len;i++){
-					const char *errstr=execute_token(prog,body.blockv->tokens[i]);
-					if(errstr){
-						postl_stackval_release(body);
-						return errstr;
-					}
+				const char *errstr=execute_block(prog,*body.blockv);
+				if(errstr){
+					postl_stackval_release(body);
+					return errstr;
 				}
 				if(lli->id==BI_IF)break;
 			}
 			postl_stackval_release(body);
+			break;
+		}
+
+		case BI_IFELSE:{ STACKSIZE_CHECK(3);
+			postl_stackval_t elsebl=postl_stack_pop(prog);
+			if(elsebl.type!=POSTL_BLOCK){
+				postl_stackval_release(elsebl);
+				RETURN_WITH_ERROR("postl: Third argument to 'ifelse' should be block, is %s",
+					valtype_string(elsebl.type));
+			}
+			postl_stackval_t thenbl=postl_stack_pop(prog);
+			if(thenbl.type!=POSTL_BLOCK){
+				postl_stackval_release(elsebl);
+				postl_stackval_release(thenbl);
+				RETURN_WITH_ERROR("postl: Second argument to 'ifelse' should be block, is %s",
+					valtype_string(thenbl.type));
+			}
+			postl_stackval_t cond=postl_stack_pop(prog);
+			bool condval=istruthy(cond);
+			postl_stackval_release(cond);
+			const char *errstr;
+			if(condval){
+				errstr=execute_block(prog,*thenbl.blockv);
+			} else {
+				errstr=execute_block(prog,*elsebl.blockv);
+			}
+			postl_stackval_release(thenbl);
+			postl_stackval_release(elsebl);
+			if(errstr)return errstr;
 			break;
 		}
 
@@ -1074,28 +1121,26 @@ const char* postl_callfunction(postl_program_t *prog,const char *name){
 		}
 		if(lli!=NULL){
 			DBGF("Calling '%s' -> user-defined function...",name);
-			if(lli->item.cfunc)lli->item.cfunc(prog);
-			else {
-				DBGF("'%s' is token function",name);
+			if(lli->item.cfunc){
+				DBGF("'%s' is a C function",name);
+				lli->item.cfunc(prog);
+			} else {
+				DBGF("'%s' is a token function",name);
 				if(lli->item.code.sz==0){
 					return "postl: [DBG] Empty token list in code_t";
 				}
-				token_t *tokens=lli->item.code.tokens;
-				int codelen=lli->item.code.len;
 				assert(!prog->buildblock);
-				DBGF("'%s' has code length %d",name,codelen);
-				for(int i=0;i<codelen;i++){
-					const char *errstr=execute_token(prog,tokens[i]);
-					if(errstr){
-						if(prog->buildblock){
-							for(int i=0;i<prog->buildblock->len;i++){
-								free(prog->buildblock->tokens[i].str);
-							}
-							free(prog->buildblock->tokens);
-							free(prog->buildblock);
+				DBGF("'%s' has %d tokens",name,lli->item.code.len);
+				const char *errstr=execute_block(prog,lli->item.code);
+				if(errstr){
+					if(prog->buildblock){
+						for(int i=0;i<prog->buildblock->len;i++){
+							free(prog->buildblock->tokens[i].str);
 						}
-						return errstr;
+						free(prog->buildblock->tokens);
+						free(prog->buildblock);
 					}
+					return errstr;
 				}
 				if(prog->buildblock)return "postl: Unclosed block in source";
 			}
