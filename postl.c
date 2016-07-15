@@ -16,7 +16,7 @@
 #endif
 #define DBGF(...) DBG(do {fprintf(stderr,__VA_ARGS__); fputc('\n',stderr);} while(0))
 
-#define FUNC_HMAP_SZ (127)
+#define HASHMAP_SIZE (127)
 
 #define GLOBALCODE_FUNCNAME "__global"
 
@@ -30,7 +30,7 @@ __attribute__((noreturn)) static void outofmem(void){
 static int namehash(const char *name){
 	int h=0,len=strlen(name);
 	for(int i=0;i<len;i++)h+=name[i]; // apparently works fine
-	return h%FUNC_HMAP_SZ;
+	return h%HASHMAP_SIZE;
 }
 
 static const char* valtype_string(postl_valtype_t type){
@@ -101,16 +101,41 @@ typedef struct funcmap_llitem_t{
 } funcmap_llitem_t;
 
 
+/*typedef struct var_item_t{
+	char *name;
+	postl_stackval_t val;
+} var_item_t;
+
+typedef struct var_llitem_t{
+	var_item_t item;
+	struct var_llitem_t *next;
+} var_llitem_t;*/
+
+
 struct postl_program_t{
 	stackitem_t *stack;
 	int stacksz;
-	funcmap_llitem_t *fmap[FUNC_HMAP_SZ];
-	code_t *buildblock; //!NULL iff collecting tokens in a { block }
+	funcmap_llitem_t *fmap[HASHMAP_SIZE];
+	//var_llitem_t *vmap[HASHMAP_SIZE];
+	code_t *buildblock; // !NULL iff collecting tokens in a { block }
+	int blockdepth;
 };
 
 
+static void funcmap_item_release(funcmap_item_t item){
+	free(item.name);
+	if(item.code.sz!=0){
+		token_t *tokens=item.code.tokens;
+		for(int i=0;i<item.code.len;i++){
+			free(tokens[i].str);
+		}
+		free(tokens);
+	}
+}
+
+
 static int tokenise(token_t **tokensp,const char *source){
-	*tokensp=NULL; //precaution
+	*tokensp=NULL; // precaution
 	int sourcelen=strlen(source);
 	int sz=128,len=0;
 	token_t *tokens=malloc(sz*sizeof(token_t));
@@ -119,10 +144,12 @@ static int tokenise(token_t **tokensp,const char *source){
 #define DESTROY_TOKENS_RET_MIN1 do {for(int i=0;i<len;i++)free(tokens[i].str); free(tokens); return -1;} while(0)
 
 	for(int i=0;i<sourcelen;i++){
-		if(source[i]=='#'){ // comment
+		if(strchr(" \t\n\r",source[i])!=NULL){
+			//whitespace; pass
+		} else if(source[i]=='#'){ // comment
 			i++;
 			while(i<sourcelen&&source[i]!='\n')i++;
-		} else if(isdigit(source[i])){
+		} else if(isdigit(source[i])||(i<sourcelen-1&&source[i]=='-'&&isdigit(source[i+1]))){
 			char *endp;
 			double nval=strtod(source+i,&endp);
 			int numlen=endp-(source+i);
@@ -164,7 +191,7 @@ static int tokenise(token_t **tokensp,const char *source){
 						case 't': c='\t'; break;
 						default: c=source[j]; break;
 						// TODO: \unnnn and \Unnnnnnnn
-						// purposefully skipped: \f, \v
+						// purposefully skipped: \f and \v
 					}
 					tokens[len].str[k++]=c;
 				} else tokens[len].str[k++]=source[j];
@@ -193,7 +220,7 @@ static int tokenise(token_t **tokensp,const char *source){
 			tokens[len].str[wordlen]='\0';
 			len++;
 			i=j-1;
-		} else if(strchr("+-*/%~&|{}",source[i])!=NULL){
+		} else /*if(strchr("+*-/%~&|><={}",source[i])!=NULL)*/{
 			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz))==NULL)outofmem();
 			tokens[len].type=TT_SYMBOL;
 			tokens[len].str=malloc(2);
@@ -201,10 +228,7 @@ static int tokenise(token_t **tokensp,const char *source){
 			tokens[len].str[0]=source[i];
 			tokens[len].str[1]='\0';
 			len++;
-			i++;
-		} else if(strchr(" \t\n\r",source[i])!=NULL){
-			//whitespace; pass
-		} else DESTROY_TOKENS_RET_MIN1;
+		} //else DESTROY_TOKENS_RET_MIN1;
 	}
 
 #undef DESTROY_TOKENS_RET_MIN1
@@ -215,7 +239,7 @@ static int tokenise(token_t **tokensp,const char *source){
 
 static const char* execute_token(postl_program_t *prog,token_t token){
 	if(prog->buildblock){
-		if(strcmp(token.str,"}")==0){
+		if(strcmp(token.str,"}")==0&&--prog->blockdepth==0){
 			stackitem_t *si=malloc(sizeof(stackitem_t));
 			if(!si)outofmem();
 			si->val.type=POSTL_BLOCK;
@@ -236,6 +260,7 @@ static const char* execute_token(postl_program_t *prog,token_t token){
 			asprintf(&bb->tokens[bb->len].str,"%s",token.str);
 			if(!bb->tokens[bb->len].str)outofmem();
 			bb->len++;
+			if(strcmp(token.str,"{")==0)prog->blockdepth++;
 		}
 		return NULL;
 	}
@@ -274,11 +299,16 @@ static const char* execute_token(postl_program_t *prog,token_t token){
 
 typedef enum builtin_enum_t{
 	BI_PLUS, BI_MINUS, BI_TIMES, BI_DIVIDE, BI_MODULO,
+	BI_EQ, BI_GT, BI_LT,
 	BI_PRINT,
 	BI_BLOCKOPEN, /*BI_BLOCKCLOSE,*/ //blockclose is directly handled by execute_token
 	BI_DEF,
-	BI_SWAP, BI_DUP, BI_ROLL, BI_ROTATE,
-	BI_STACKDUMP
+	BI_SWAP, BI_DUP, BI_POP, BI_ROLL, BI_ROTATE,
+	BI_IF, BI_WHILE,
+	BI_STACKSIZE,
+	BI_STACKDUMP,
+	BI_CEIL, BI_FLOOR, BI_ROUND, BI_MIN, BI_MAX, BI_ABS, BI_SQRT, BI_EXP, BI_LOG, BI_POW,
+	BI_SIN, BI_COS, BI_TAN, BI_ASIN, BI_ACOS, BI_ATAN, BI_ATAN2, BI_E, BI_PI
 } builtin_enum_t;
 
 typedef struct builtin_llitem_t {
@@ -287,8 +317,8 @@ typedef struct builtin_llitem_t {
 	struct builtin_llitem_t *next;
 } builtin_llitem_t;
 
-builtin_llitem_t *builtins_hmap[FUNC_HMAP_SZ]={NULL};
-bool builtins_hmap_initialised=false;
+static builtin_llitem_t *builtins_hmap[HASHMAP_SIZE]={NULL};
+static bool builtins_hmap_initialised=false;
 
 static void builtin_add(const char *name,builtin_enum_t id){
 	int h=namehash(name);
@@ -306,14 +336,40 @@ static void initialise_builtins_hmap(void){
 	builtin_add("*",        BI_TIMES);
 	builtin_add("/",        BI_DIVIDE);
 	builtin_add("%",        BI_MODULO);
+	builtin_add("=",        BI_EQ);
+	builtin_add(">",        BI_GT);
+	builtin_add("<",        BI_LT);
 	builtin_add("print",    BI_PRINT);
 	builtin_add("{",        BI_BLOCKOPEN);
 	builtin_add("def",      BI_DEF);
 	builtin_add("swap",     BI_SWAP);
 	builtin_add("dup",      BI_DUP);
+	builtin_add("pop",      BI_POP);
 	builtin_add("roll",     BI_ROLL);
 	builtin_add("rotate",   BI_ROTATE);
+	builtin_add("if",       BI_IF);
+	builtin_add("while",    BI_WHILE);
+	builtin_add("stacksize",BI_STACKSIZE);
 	builtin_add("stackdump",BI_STACKDUMP);
+	builtin_add("ceil",     BI_CEIL);
+	builtin_add("floor",    BI_FLOOR);
+	builtin_add("round",    BI_ROUND);
+	builtin_add("min",      BI_MIN);
+	builtin_add("max",      BI_MAX);
+	builtin_add("abs",      BI_ABS);
+	builtin_add("sqrt",     BI_SQRT);
+	builtin_add("exp",      BI_EXP);
+	builtin_add("log",      BI_LOG);
+	builtin_add("pow",      BI_POW);
+	builtin_add("sin",      BI_SIN);
+	builtin_add("cos",      BI_COS);
+	builtin_add("tan",      BI_TAN);
+	builtin_add("asin",     BI_ASIN);
+	builtin_add("acos",     BI_ACOS);
+	builtin_add("atan",     BI_ATAN);
+	builtin_add("atan2",    BI_ATAN2);
+	builtin_add("E",        BI_E);
+	builtin_add("PI",       BI_PI);
 
 	builtins_hmap_initialised=true;
 }
@@ -347,13 +403,50 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 	postl_stackval_t res;
 
 	switch(lli->id){
+
+#define BINARY_ARITH_OP(id,expr) \
+		case (id): STACKSIZE_CHECK(2); \
+			b=postl_stack_pop(prog); \
+			a=postl_stack_pop(prog); \
+			if(a.type!=POSTL_NUM||b.type!=POSTL_NUM){ \
+				postl_stackval_release(a); \
+				postl_stackval_release(b); \
+				if(a.type!=POSTL_NUM)CANNOT_USE(a.type); \
+				else CANNOT_USE(b.type); \
+			} \
+			res.type=POSTL_NUM; \
+			res.numv=(expr); \
+			postl_stack_push(prog,res); \
+			postl_stackval_release(a); \
+			postl_stackval_release(b); \
+			break;
+
+#define UNARY_ARITH_OP(id,expr) \
+		case (id): STACKSIZE_CHECK(1); \
+			a=postl_stack_pop(prog); \
+			if(a.type!=POSTL_NUM){ \
+				postl_stackval_release(a); \
+				CANNOT_USE(a.type); \
+			} \
+			res.type=POSTL_NUM; \
+			res.numv=(expr); \
+			postl_stack_push(prog,res); \
+			postl_stackval_release(a); \
+			break;
+
+
 		case BI_PLUS: STACKSIZE_CHECK(2);
 			b=postl_stack_pop(prog);
 			a=postl_stack_pop(prog);
-			if(a.type!=b.type)
+			if(a.type!=b.type){
+				postl_stackval_release(a);
+				postl_stackval_release(b);
 				RETURN_WITH_ERROR("postl: Builtin '+' needs arguments of similar types (%s != %s)",
 					valtype_string(a.type),valtype_string(b.type));
+			}
 			if(a.type==POSTL_BLOCK){
+				postl_stackval_release(a);
+				postl_stackval_release(b);
 				CANNOT_USE(POSTL_BLOCK);
 			} else if(a.type==POSTL_STR){
 				res.type=POSTL_STR;
@@ -365,43 +458,32 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 				res.numv=a.numv+b.numv;
 			}
 			postl_stack_push(prog,res);
-			postl_stackval_release(prog,a);
-			postl_stackval_release(prog,b);
+			postl_stackval_release(a);
+			postl_stackval_release(b);
 			break;
 
-#define SIMPLE_BINARY_ARITH_OP(id,expr) \
-		case (id): STACKSIZE_CHECK(2); \
-			b=postl_stack_pop(prog); \
-			a=postl_stack_pop(prog); \
-			if(a.type!=POSTL_NUM)CANNOT_USE(a.type); \
-			if(b.type!=POSTL_NUM)CANNOT_USE(b.type); \
-			res.type=POSTL_NUM; \
-			res.numv=(expr); \
-			postl_stack_push(prog,res); \
-			postl_stackval_release(prog,a); \
-			postl_stackval_release(prog,b); \
-			break;
-
-		SIMPLE_BINARY_ARITH_OP(BI_MINUS,a.numv-b.numv)
-		SIMPLE_BINARY_ARITH_OP(BI_TIMES,a.numv*b.numv)
-		SIMPLE_BINARY_ARITH_OP(BI_DIVIDE,b.numv==0?nan(""):a.numv/b.numv)
-		SIMPLE_BINARY_ARITH_OP(BI_MODULO,realmodulo(a.numv,b.numv))
-
-#undef SIMPLE_BINARY_ARITH_OP
+		BINARY_ARITH_OP(BI_MINUS,a.numv-b.numv)
+		BINARY_ARITH_OP(BI_TIMES,a.numv*b.numv)
+		BINARY_ARITH_OP(BI_DIVIDE,b.numv==0?nan(""):a.numv/b.numv)
+		BINARY_ARITH_OP(BI_MODULO,realmodulo(a.numv,b.numv))
+		BINARY_ARITH_OP(BI_EQ,a.numv==b.numv)
+		BINARY_ARITH_OP(BI_GT,a.numv>b.numv)
+		BINARY_ARITH_OP(BI_LT,a.numv<b.numv)
 
 		case BI_PRINT: STACKSIZE_CHECK(1);
 			a=postl_stack_pop(prog);
 			switch(a.type){
 				case POSTL_NUM:
-					printf("%lf",a.numv); fflush(stdout);
+					printf("%g",a.numv); fflush(stdout);
 					break;
 				case POSTL_STR:
 					printf("%s",a.strv); fflush(stdout);
 					break;
 				default:
+					postl_stackval_release(a);
 					CANNOT_USE(a.type);
 			}
-			postl_stackval_release(prog,a);
+			postl_stackval_release(a);
 			break;
 
 		case BI_BLOCKOPEN:
@@ -412,27 +494,80 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			prog->buildblock->len=0;
 			prog->buildblock->tokens=malloc(prog->buildblock->sz*sizeof(token_t));
 			if(!prog->buildblock->tokens)outofmem();
+			prog->blockdepth=1;
 			break;
 
 		case BI_DEF:{ STACKSIZE_CHECK(2);
 			b=postl_stack_pop(prog);
 			a=postl_stack_pop(prog);
-			if(a.type!=POSTL_STR)
+			if(a.type!=POSTL_STR){
+				postl_stackval_release(a);
+				postl_stackval_release(b);
 				RETURN_WITH_ERROR("postl: First argument to 'def' should be string, is %s",
 					valtype_string(a.type));
-			if(b.type!=POSTL_BLOCK)
-				RETURN_WITH_ERROR("postl: Second argument to 'def' should be block, is %s",
-					valtype_string(b.type));
+			}
 			int h=namehash(a.strv);
-			funcmap_llitem_t *lli=malloc(sizeof(funcmap_llitem_t));
-			if(!lli)outofmem();
-			lli->item.name=a.strv;
-			lli->item.cfunc=NULL;
-			lli->item.code=*b.blockv;
-			lli->next=prog->fmap[h];
-			prog->fmap[h]=lli;
-			//postl_stackval_release(prog,a); //values were copied to function definition
-			//postl_stackval_release(prog,b);
+
+			//First lookup the name in the function table, it might need to be deleted
+			{
+				funcmap_llitem_t *lli=prog->fmap[h],*parent=NULL;
+				while(lli){
+					if(strcmp(lli->item.name,a.strv)==0)break;
+					parent=lli;
+					lli=lli->next;
+				}
+				if(lli){
+					if(parent)parent->next=lli->next;
+					else prog->fmap[h]=lli->next;
+					funcmap_item_release(lli->item);
+					free(lli);
+				}
+			}
+
+			if(b.type!=POSTL_BLOCK){
+				if(b.type!=POSTL_NUM&&b.type!=POSTL_STR){
+					postl_stackval_release(a);
+					postl_stackval_release(b);
+					RETURN_WITH_ERROR("postl: [DBG] Invalid b.type in BI_DEF: %d",b.type);
+				}
+				funcmap_llitem_t *lli=malloc(sizeof(funcmap_llitem_t));
+				if(!lli)outofmem();
+				lli->item.name=a.strv;
+				lli->item.cfunc=NULL;
+				lli->item.code.sz=1;
+				lli->item.code.len=1;
+				lli->item.code.tokens=malloc(sizeof(token_t));
+				if(!lli->item.code.tokens)outofmem();
+				token_t *token=lli->item.code.tokens;
+				switch(b.type){
+					case POSTL_NUM:
+						token->type=TT_NUM;
+						asprintf(&token->str,"%lf",b.numv);
+						if(!token->str)outofmem();
+						break;
+
+					case POSTL_STR:
+						token->type=TT_STR;
+						asprintf(&token->str,"%s",b.strv);
+						if(!token->str)outofmem();
+						break;
+
+					default:
+						assert(false);
+				}
+				lli->next=prog->fmap[h];
+				prog->fmap[h]=lli;
+			} else {
+				funcmap_llitem_t *lli=malloc(sizeof(funcmap_llitem_t));
+				if(!lli)outofmem();
+				lli->item.name=a.strv;
+				lli->item.cfunc=NULL;
+				lli->item.code=*b.blockv;
+				lli->next=prog->fmap[h];
+				prog->fmap[h]=lli;
+			}
+			//postl_stackval_release(a); //values were copied to function definition
+			//postl_stackval_release(b);
 			break;
 		}
 
@@ -452,46 +587,114 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			postl_stack_push(prog,prog->stack->val);
 			break;
 
+		case BI_POP: STACKSIZE_CHECK(1);
+			postl_stackval_release(postl_stack_pop(prog));
+			break;
+
 		// positive roll amount *extracts* elements from the stack bottom
 		// negative roll amount *inserts* elements at the stack bottom
-		case BI_ROLL:{ STACKSIZE_CHECK(1);
-			a=postl_stack_pop(prog);
-			if(a.type!=POSTL_NUM)CANNOT_USE(a.type);
-			if((double)(int)a.numv!=a.numv)
-				RETURN_WITH_ERROR("postl: Argument to 'roll' not integral");
-			int stacksize=postl_stack_size(prog);
-			if(stacksize==0)break;  // nothing to do
-			int amount=(int)a.numv%stacksize;
-			if(amount>0){
-				stackitem_t *newbot=prog->stack;
-				for(int i=0;i<stacksize-amount-1;i++)newbot=newbot->next;
-				stackitem_t *newtop=newbot->next;
-				assert(newtop);  // because amount>0
-				stackitem_t *bottom=newtop;
-				while(bottom->next)bottom=bottom->next;
-				newbot->next=NULL;
-				bottom->next=prog->stack;
-				prog->stack=newtop;
-			} else if(amount<0){
-				amount=-amount;
-				stackitem_t *newbot=prog->stack;
-				for(int i=0;i<amount-1;i++)newbot=newbot->next;
-				stackitem_t *newtop=newbot->next;
-				assert(newtop);  // because amount<0
-				stackitem_t *bottom=newtop;
-				while(bottom->next)bottom=bottom->next;
-				newbot->next=NULL;
-				bottom->next=prog->stack;
-				prog->stack=newtop;
+		// rotate: first cycle length, then rotation amount
+		case BI_ROLL:
+		case BI_ROTATE:{
+			STACKSIZE_CHECK(1+(lli->id==BI_ROTATE));
+			b=postl_stack_pop(prog);
+			if(b.type!=POSTL_NUM){
+				postl_stackval_release(b);
+				CANNOT_USE(b.type);
 			}
+			if((double)(int)b.numv!=b.numv){
+				postl_stackval_release(b);
+				RETURN_WITH_ERROR("postl: Argument to '%s' not integral",name);
+			}
+			int bnum=b.numv;
+			postl_stackval_release(b);
+			int length;
+			int stacksize;
+			if(lli->id==BI_ROTATE){
+				a=postl_stack_pop(prog);
+				stacksize=prog->stacksz;
+				if(a.type!=POSTL_NUM){
+					postl_stackval_release(a);
+					CANNOT_USE(a.type);
+				}
+				if((double)(int)a.numv!=a.numv){
+					postl_stackval_release(a);
+					RETURN_WITH_ERROR("postl: Argument to 'rotate' not integral");
+				}
+				length=a.numv;
+				postl_stackval_release(a);
+				if(length<0)
+					RETURN_WITH_ERROR("postl: First argument to 'rotate' negative");
+				if(length>stacksize)
+					RETURN_WITH_ERROR("postl: First argument to 'rotate' larger than stacksize");
+			} else {
+				length=stacksize=prog->stacksz;
+			}
+			// DBGF("prelim: length=%d",length);
+			if(stacksize<=1||length<=1)break;  // nothing to do
+			int amount=(int)bnum%length;
+			// DBGF("prelim: amount=%d",amount);
+			if(amount<0)amount=length+amount;
+			DBGF("ssize=%d length=%d amount=%d",stacksize,length,amount);
+
+			stackitem_t *newbot=prog->stack;
+			for(int i=0;i<length-amount-1;i++)newbot=newbot->next;
+			stackitem_t *newtop=newbot->next;
+			assert(newtop);  // because amount>0
+			stackitem_t *bottom=newtop;
+			for(int i=0;i<amount-1;i++)bottom=bottom->next;
+			newbot->next=bottom->next;
+			bottom->next=prog->stack;
+			prog->stack=newtop;
 			break;
 		}
+
+		case BI_IF:
+		case BI_WHILE:{
+			STACKSIZE_CHECK(2);
+			postl_stackval_t body=postl_stack_pop(prog);
+			if(body.type!=POSTL_BLOCK){
+				postl_stackval_release(body);
+				RETURN_WITH_ERROR("postl: Argument to '%s' should be block, is %s",
+					name,valtype_string(body.type));
+			}
+			while(true){
+				postl_stackval_t cond=postl_stack_pop(prog);
+				bool stop=false;
+				switch(cond.type){
+					case POSTL_NUM: stop=cond.numv==0; break;
+					case POSTL_STR: stop=cond.strv[0]!='\0'; break;
+					case POSTL_BLOCK: stop=false; break;
+					default:
+						postl_stackval_release(cond);
+						postl_stackval_release(body);
+						RETURN_WITH_ERROR("postl: Condition has invalid type %s in '%s'",
+							valtype_string(cond.type),name);
+				}
+				postl_stackval_release(cond);
+				if(stop)break;
+				for(int i=0;i<body.blockv->len;i++){
+					const char *errstr=execute_token(prog,body.blockv->tokens[i]);
+					if(errstr){
+						postl_stackval_release(body);
+						return errstr;
+					}
+				}
+				if(lli->id==BI_IF)break;
+			}
+			postl_stackval_release(body);
+			break;
+		}
+
+		case BI_STACKSIZE:
+			postl_stack_push(prog,postl_stackval_makenum(postl_stack_size(prog)));
+			break;
 
 		case BI_STACKDUMP:
 			for(stackitem_t *si=prog->stack;si;si=si->next){
 				switch(si->val.type){
 					case POSTL_NUM:
-						printf("%lf",si->val.numv);
+						printf("%g",si->val.numv);
 						break;
 					case POSTL_STR:
 						pprintstr(si->val.strv);
@@ -513,9 +716,40 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			putchar('\n');
 			break;
 
+		UNARY_ARITH_OP(BI_CEIL,ceil(a.numv))
+		UNARY_ARITH_OP(BI_FLOOR,floor(a.numv))
+		UNARY_ARITH_OP(BI_ROUND,round(a.numv))
+		BINARY_ARITH_OP(BI_MIN,fmin(a.numv,b.numv))
+		BINARY_ARITH_OP(BI_MAX,fmax(a.numv,b.numv))
+		UNARY_ARITH_OP(BI_ABS,fabs(a.numv))
+		UNARY_ARITH_OP(BI_SQRT,sqrt(a.numv))
+		UNARY_ARITH_OP(BI_EXP,exp(a.numv))
+		UNARY_ARITH_OP(BI_LOG,log(a.numv))
+		BINARY_ARITH_OP(BI_POW,pow(a.numv,b.numv))
+		UNARY_ARITH_OP(BI_SIN,sin(a.numv))
+		UNARY_ARITH_OP(BI_COS,cos(a.numv))
+		UNARY_ARITH_OP(BI_TAN,tan(a.numv))
+		UNARY_ARITH_OP(BI_ASIN,asin(a.numv))
+		UNARY_ARITH_OP(BI_ACOS,acos(a.numv))
+		UNARY_ARITH_OP(BI_ATAN,atan(a.numv))
+		BINARY_ARITH_OP(BI_ATAN2,atan2(a.numv,b.numv))
+
+		case BI_E:
+			postl_stack_push(prog,postl_stackval_makenum(M_E));
+			break;
+
+		case BI_PI:
+			postl_stack_push(prog,postl_stackval_makenum(M_PI));
+			break;
+
 		default:
 			snprintf(errbuf,256,"postl: Sorry, not implemented: builtin '%s'",name);
 			return errbuf;
+
+
+#undef UNARY_ARITH_OP
+#undef BINARY_ARITH_OP
+
 	}
 
 #undef CANNOT_USE
@@ -532,7 +766,7 @@ postl_program_t* postl_makeprogram(void){
 	if(!prog)outofmem();
 	prog->stack=NULL;
 	prog->stacksz=0;
-	for(int i=0;i<FUNC_HMAP_SZ;i++){
+	for(int i=0;i<HASHMAP_SIZE;i++){
 		prog->fmap[i]=NULL;
 	}
 
@@ -555,7 +789,12 @@ postl_program_t* postl_makeprogram(void){
 	item->code.tokens=malloc(item->code.sz*sizeof(token_t));
 	if(!item->code.tokens)outofmem();
 
+	/*for(int i=0;i<HASHMAP_SIZE;i++){
+		prog->vmap[i]=NULL;
+	}*/
+
 	prog->buildblock=NULL;
+	prog->blockdepth=0; //not strictly necessary as buildblock==NULL conveys the message, but still
 
 	initialise_builtins_hmap();
 
@@ -608,8 +847,8 @@ const char* postl_runglobalcode(postl_program_t *prog){
 	return postl_callfunction(prog,GLOBALCODE_FUNCNAME);
 }
 
-postl_stackval_t postl_stackval_makenum(int num){
-	DBGF("postl_stackval_makenum(%d)",num);
+postl_stackval_t postl_stackval_makenum(double num){
+	DBGF("postl_stackval_makenum(%g)",num);
 	postl_stackval_t st={.type=POSTL_NUM,.numv=num};
 	return st;
 }
@@ -687,9 +926,8 @@ postl_stackval_t postl_stack_pop(postl_program_t *prog){
 	return val;
 }
 
-void postl_stackval_release(postl_program_t *prog,postl_stackval_t val){
-	(void)prog;
-	DBGF("postl_stackval_release(%p,{type=%d,...})",prog,val.type);
+void postl_stackval_release(postl_stackval_t val){
+	DBGF("postl_stackval_release({type=%d,...})",val.type);
 	if(val.type==POSTL_STR){
 		if(!val.strv)return;
 		free(val.strv);
@@ -707,44 +945,57 @@ const char* postl_callfunction(postl_program_t *prog,const char *name){
 	static char errbuf[256]={'\0'};
 	DBGF("postl_callfunction(%p,%s)",prog,name);
 
-	// Check for a user-defined function
 	int h=namehash(name);
-	funcmap_llitem_t *lli=prog->fmap[h];
-	while(lli){
-		if(strcmp(lli->item.name,name)==0)break;
-		lli=lli->next;
-	}
-	if(lli!=NULL){
-		DBGF("Calling '%s' -> user-defined function...",name);
-		if(lli->item.cfunc)lli->item.cfunc(prog);
-		else {
-			DBGF("'%s' is token function",name);
-			if(lli->item.code.sz==0){
-				return "postl: [DBG] Empty token list in code_t";
-			}
-			token_t *tokens=lli->item.code.tokens;
-			int codelen=lli->item.code.len;
-			assert(!prog->buildblock);
-			DBGF("'%s' has code length %d",name,codelen);
-			for(int i=0;i<codelen;i++){
-				const char *errstr=execute_token(prog,tokens[i]);
-				if(errstr){
-					if(prog->buildblock){
-						for(int i=0;i<prog->buildblock->len;i++){
-							free(prog->buildblock->tokens[i].str);
-						}
-						free(prog->buildblock->tokens);
-						free(prog->buildblock);
-					}
-					return errstr;
-				}
-			}
-			if(prog->buildblock)return "postl: Unclosed block in source";
+
+	// Check for a user-defined function
+	{
+		funcmap_llitem_t *lli=prog->fmap[h];
+		while(lli){
+			if(strcmp(lli->item.name,name)==0)break;
+			lli=lli->next;
 		}
-		return NULL;
+		if(lli!=NULL){
+			DBGF("Calling '%s' -> user-defined function...",name);
+			if(lli->item.cfunc)lli->item.cfunc(prog);
+			else {
+				DBGF("'%s' is token function",name);
+				if(lli->item.code.sz==0){
+					return "postl: [DBG] Empty token list in code_t";
+				}
+				token_t *tokens=lli->item.code.tokens;
+				int codelen=lli->item.code.len;
+				assert(!prog->buildblock);
+				DBGF("'%s' has code length %d",name,codelen);
+				for(int i=0;i<codelen;i++){
+					const char *errstr=execute_token(prog,tokens[i]);
+					if(errstr){
+						if(prog->buildblock){
+							for(int i=0;i<prog->buildblock->len;i++){
+								free(prog->buildblock->tokens[i].str);
+							}
+							free(prog->buildblock->tokens);
+							free(prog->buildblock);
+						}
+						return errstr;
+					}
+				}
+				if(prog->buildblock)return "postl: Unclosed block in source";
+			}
+			return NULL;
+		}
 	}
 
-	// Check for a variable (first need to implement variables)
+	/*// Check for a variable
+	{
+		var_llitem_t *lli=prog->vmap[h];
+		while(lli){
+			if(strcmp(lli->item.name,name)==0)break;
+			lli=lli->next;
+		}
+		if(lli!=NULL){
+
+		}
+	}*/
 
 	// Check for a built-in function
 	bool found=false;
@@ -758,27 +1009,46 @@ const char* postl_callfunction(postl_program_t *prog,const char *name){
 
 void postl_destroy(postl_program_t *prog){
 	DBGF("postl_destroy(%p)",prog);
+
+	DBGF("Stack:");
 	while(prog->stack){
 		stackitem_t *si=prog->stack;
-		if(si->val.strv)free(si->val.strv);
+		DBG(
+			printf("- type=%s ",valtype_string(si->val.type));
+			switch(si->val.type){
+				case POSTL_NUM: printf("numv=%g\n",si->val.numv); break;
+				case POSTL_STR: printf("strv=%s\n",si->val.strv); break;
+				case POSTL_BLOCK: printf("blockv=...\n"); break;
+				default: assert(false);
+			}
+		)
+		postl_stackval_release(si->val);
 		prog->stack=si->next;
 		free(si);
 	}
-	for(int h=0;h<FUNC_HMAP_SZ;h++){
+
+	DBGF("Function map:");
+	for(int h=0;h<HASHMAP_SIZE;h++){
+		DBG(if(prog->fmap[h])DBGF("- h=%d:",h);)
 		while(prog->fmap[h]){
 			funcmap_llitem_t *lli=prog->fmap[h];
-			free(lli->item.name);
-			if(lli->item.code.sz!=0){
-				token_t *tokens=lli->item.code.tokens;
-				for(int i=0;i<lli->item.code.len;i++){
-					free(tokens[i].str);
-				}
-				free(tokens);
-			}
+			DBGF("  - name=%s",lli->item.name);
+			funcmap_item_release(lli->item);
 			prog->fmap[h]=lli->next;
 			free(lli);
 		}
 	}
+
+	/*for(int h=0;h<HASHMAP_SIZE;h++){
+		while(prog->vmap[h]){
+			var_llitem_t *lli=prog->vmap[h];
+			free(lli->item.name);
+			postl_stackval_release(lli->item.val);
+			lli=lli->next;
+		}
+	}*/
+
+	DBGF("buildblock=%p",prog->buildblock);
 	if(prog->buildblock){
 		token_t *tokens=prog->buildblock->tokens;
 		for(int i=0;i<prog->buildblock->len;i++){
@@ -787,5 +1057,18 @@ void postl_destroy(postl_program_t *prog){
 		free(tokens);
 		free(prog->buildblock);
 	}
+
 	free(prog);
+
+	DBG(
+		DBGF("builtins_hmap:");
+		for(int h=0;h<HASHMAP_SIZE;h++){
+			if(builtins_hmap[h])DBGF("- h=%d:",h);
+			builtin_llitem_t *lli=builtins_hmap[h];
+			while(lli){
+				DBGF("  - name=%s",lli->name);
+				lli=lli->next;
+			}
+		}
+	)
 }

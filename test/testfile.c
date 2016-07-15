@@ -31,22 +31,8 @@ void func_kaas(postl_program_t *prog){
 	printf("func_kaas called with types %d and %d\n",stnum.type,ststr.type);
 	printf("func_kaas called with %lf and <%s>\n",stnum.numv,ststr.strv);
 	postl_stack_push(prog,postl_stackval_makenum(stnum.numv+1));
-	postl_stackval_release(prog,ststr);
-	postl_stackval_release(prog,stnum);
-}
-
-void func_sqrt(postl_program_t *prog){
-	if(postl_stack_size(prog)<1){
-		fprintf(stderr,"func_sqrt needs an argument\n");
-		postl_destroy(prog);
-		exit(1);
-	}
-	postl_stackval_t st=postl_stack_pop(prog);
-	double res;
-	if(st.type!=POSTL_NUM||st.numv<0)res=nan("");
-	else res=sqrt(st.numv);
-	postl_stack_push(prog,postl_stackval_makenum(res));
-	postl_stackval_release(prog,st);
+	postl_stackval_release(ststr);
+	postl_stackval_release(stnum);
 }
 
 int main(int argc,char **argv){
@@ -60,7 +46,6 @@ int main(int argc,char **argv){
 
 	postl_program_t *prog=postl_makeprogram();
 	postl_register(prog,"kaas",func_kaas);
-	postl_register(prog,"sqrt",func_sqrt);
 	if((errstr=postl_addcode(prog,source))){
 		fprintf(stderr,"\x1B[31m%s\x1B[0m\n",errstr);
 		postl_destroy(prog);
