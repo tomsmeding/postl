@@ -404,7 +404,7 @@ typedef enum builtin_enum_t{
 	BI_NOT,
 	BI_PRINT, BI_LF,
 	BI_BLOCKOPEN, /*BI_BLOCKCLOSE,*/ //blockclose is directly handled by execute_token
-	BI_DEF,
+	BI_DEF, BI_GDEF,
 	BI_EVAL,
 	BI_SWAP, BI_DUP, BI_POP, BI_ROLL, BI_ROTATE,
 	BI_IF, BI_WHILE, BI_IFELSE,
@@ -448,6 +448,7 @@ static void initialise_builtins_hmap(void){
 	builtin_add("lf",        BI_LF);
 	builtin_add("{",         BI_BLOCKOPEN);
 	builtin_add("def",       BI_DEF);
+	builtin_add("gdef",      BI_GDEF);
 	builtin_add("eval",      BI_EVAL);
 	builtin_add("swap",      BI_SWAP);
 	builtin_add("dup",       BI_DUP);
@@ -612,20 +613,22 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 			prog->blockdepth=1;
 			break;
 
-		case BI_DEF:{ STACKSIZE_CHECK(2);
+		case BI_DEF:
+		case BI_GDEF:{
+			STACKSIZE_CHECK(2);
 			b=postl_stack_pop(prog);
 			a=postl_stack_pop(prog);
 			if(b.type!=POSTL_STR){
 				postl_stackval_release(a);
 				postl_stackval_release(b);
-				RETURN_WITH_ERROR("postl: Second argument to 'def' should be string, is %s",
-					valtype_string(b.type));
+				RETURN_WITH_ERROR("postl: Second argument to '%s' should be string, is %s",
+					name,valtype_string(b.type));
 			}
 			int h=namehash(b.strv);
 
 			bool thisscope=true; // Whether this name is in the top scope; if so, we need to delete it
 			                     // upon setting the new value
-			if(prog->scopestack){
+			if(prog->scopestack&&lli->id==BI_DEF){ // gdef does *not* check scoping
 				name_llitem_t *nlli=prog->scopestack->vars[h];
 				while(nlli){
 					if(strcmp(nlli->name,b.strv)==0)break;
@@ -634,7 +637,7 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 				thisscope=(bool)nlli;
 			}
 
-			DBGF("[def]: b.strv='%s'; thisscope=%d\n",b.strv,thisscope);
+			DBGF("[%s]: b.strv='%s'; thisscope=%d\n",name,b.strv,thisscope);
 			if(thisscope){
 				// Lookup the name in the function table, it might still need to be deleted
 				funcmap_llitem_t *lli=prog->fmap[h],*parent=NULL;

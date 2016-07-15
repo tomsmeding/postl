@@ -15,7 +15,7 @@
 	__n 1 > {
 		#__n print lf
 		__n -1 rotate
-		__n 1 - "__n" def
+		__n 1 - "__n" gdef
 	__n 1 > } while
 } "reverse" def
 
