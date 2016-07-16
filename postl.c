@@ -187,14 +187,24 @@ static void funcmap_item_release(funcmap_item_t item){
 }
 
 
-static int tokenise(token_t **tokensp,const char *source){
+//maybe returns error string
+static const char* tokenise(token_t **tokensp,const char *source,int *ntokens){
+	static char errbuf[256];
 	*tokensp=NULL; // precaution
 	int sourcelen=strlen(source);
 	int sz=128,len=0;
 	token_t *tokens=malloc(sz,token_t);
 	if(!tokens)outofmem();
 
-#define DESTROY_TOKENS_RET_MIN1 do {for(int i=0;i<len;i++)free(tokens[i].str); free(tokens); return -1;} while(0)
+	int blockdepth=0;
+
+#define DESTROY_TOKENS_RETF(...) \
+		do { \
+			for(int i=0;i<len;i++)free(tokens[i].str); \
+			free(tokens); \
+			snprintf(errbuf,256,__VA_ARGS__); \
+			return errbuf; \
+		} while(0)
 
 	for(int i=0;i<sourcelen;i++){
 		if(strchr(" \t\n\r",source[i])!=NULL){
@@ -206,7 +216,8 @@ static int tokenise(token_t **tokensp,const char *source){
 			char *endp;
 			double nval=strtod(source+i,&endp);
 			int numlen=endp-(source+i);
-			if(isnan(nval)||isinf(nval)||numlen<=0)DESTROY_TOKENS_RET_MIN1;
+			if(isnan(nval)||isinf(nval)||numlen<=0)
+				DESTROY_TOKENS_RETF("postl: Invalid number in source");
 
 			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
 			tokens[len].type=TT_NUM;
@@ -224,7 +235,8 @@ static int tokenise(token_t **tokensp,const char *source){
 				if(source[j]=='\\')j++;
 				slen++;
 			}
-			if(j==sourcelen)DESTROY_TOKENS_RET_MIN1;
+			if(j==sourcelen)
+				DESTROY_TOKENS_RETF("postl: Unclosed string (from char %d) in source file",i-1);
 
 			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
 			tokens[len].type=TT_STR;
@@ -257,7 +269,7 @@ static int tokenise(token_t **tokensp,const char *source){
 			if(isppc){
 				i++;
 				if(i==sourcelen||(!isalpha(source[i])&&source[i]!='_'&&!isdigit(source[i])))
-					DESTROY_TOKENS_RET_MIN1;
+					DESTROY_TOKENS_RETF("postl: '@' not followed by PPC token");
 			}
 			int j;
 			for(j=i+1;j<sourcelen;j++){
@@ -281,24 +293,27 @@ static int tokenise(token_t **tokensp,const char *source){
 			tokens[len].str[0]=source[i];
 			tokens[len].str[1]='\0';
 			len++;
+			if(source[i]=='{')blockdepth++;
+			else if(source[i]=='}')blockdepth--;
+			if(blockdepth<0)
+				DESTROY_TOKENS_RETF("postl: Extra '}' in source");
 		} //else DESTROY_TOKENS_RET_MIN1;
 		DBGF("i=%d, len=%d; tokens[%d].type=%d",i,len,len==0?-123:len-1,tokens[len==0?-123:len-1].type);
 	}
 
-#undef DESTROY_TOKENS_RET_MIN1
+	if(blockdepth<0)
+		DESTROY_TOKENS_RETF("postl: Extra '}' in source");
+	if(blockdepth>0)
+		DESTROY_TOKENS_RETF("postl: Missing %d '{'%s in source",blockdepth,blockdepth==1?"":"s");
+
+#undef DESTROY_TOKENS_RETF
 
 	*tokensp=tokens;
-	return len;
+	*ntokens=len;
+	return NULL;
 }
 
 static const char* execute_token(postl_program_t *prog,token_t token){
-	DBG(
-		code_t *code=&prog->fmap[53]->item.code;
-		for(int i=0;i<code->len;i++){
-			// DBGF("tokens[%d]={type=%d, str=%s}",i,code->tokens[i].type,code->tokens[i].str);
-			if(code->tokens[i].str==NULL)__asm("int3\n\t");
-		}
-	)
 	if(prog->buildblock){
 		if(strcmp(token.str,"}")==0&&--prog->blockdepth==0){
 			code_t *bb=prog->buildblock;
@@ -731,6 +746,8 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 				postl_stackval_release(a);
 				CANNOT_USE(a.type);
 			}
+			if(strcmp(a.strv,"{")==0||strcmp(a.strv,"}")==0)
+				return "Cannot call builtins '{' and '}' via builtin 'builtin'";
 			bool found=false;
 			const char *errstr=execute_builtin(prog,a.strv,&found);
 			postl_stackval_release(a);
@@ -965,25 +982,6 @@ postl_program_t* postl_makeprogram(void){
 		prog->fmap[i]=NULL;
 	}
 
-	int h=namehash(GLOBALCODE_FUNCNAME);
-	prog->fmap[h]=malloc(1,funcmap_llitem_t);
-	if(!prog->fmap[h])outofmem();
-
-	prog->fmap[h]->next=NULL;
-
-	int len=strlen(GLOBALCODE_FUNCNAME);
-	funcmap_item_t *item=&prog->fmap[h]->item;
-	item->name=malloc(len+1,char);
-	if(!item->name)outofmem();
-	memcpy(item->name,GLOBALCODE_FUNCNAME,len+1);
-
-	item->cfunc=NULL;
-
-	item->code.sz=128;
-	item->code.len=0;
-	item->code.tokens=malloc(item->code.sz,token_t);
-	if(!item->code.tokens)outofmem();
-
 	/*for(int i=0;i<HASHMAP_SIZE;i++){
 		prog->vmap[i]=NULL;
 	}*/
@@ -1015,11 +1013,16 @@ void postl_register(postl_program_t *prog,const char *name,void (*func)(postl_pr
 	prog->fmap[h]=llitem;
 }
 
-const char* postl_addcode(postl_program_t *prog,const char *source){
-	DBGF("postl_addcode(%p,<<<\"%s\">>>)",prog,source);
+const char* postl_runcode(postl_program_t *prog,const char *source){
+	DBGF("postl_runcode(%p,<<<\"%s\">>>)",prog,source);
 	token_t *tokens=NULL;
-	int len=tokenise(&tokens,source);
-	if(len<0)return "Tokenise error";
+	int len=-1;
+	const char *errstr=tokenise(&tokens,source,&len);
+	if(len<0){
+		if(!errstr)return "postl: Tokenise error? (errstr=NULL)";
+		return errstr;
+	}
+	if(errstr)return errstr;
 	DBG(
 		DBGF("%d tokens parsed",len);
 		for(int i=0;i<len;i++){
@@ -1027,21 +1030,16 @@ const char* postl_addcode(postl_program_t *prog,const char *source){
 		}
 	)
 	assert(tokens);
-	code_t *code=&prog->fmap[namehash(GLOBALCODE_FUNCNAME)]->item.code;
-	if(code->len+len>code->sz){
-		code->sz=code->len+len+16;
-		code->tokens=realloc(code->tokens,code->sz*sizeof(token_t));
-		if(!code->tokens)outofmem();
-	}
-	memcpy(code->tokens+code->len,tokens,len*sizeof(token_t));
-	code->len+=len;
-	free(tokens);
-	return NULL;
-}
 
-const char* postl_runglobalcode(postl_program_t *prog){
-	DBGF("postl_runglobalcode(%p)",prog);
-	return postl_callfunction(prog,GLOBALCODE_FUNCNAME);
+	errstr=NULL;
+	for(int i=0;i<len;i++){
+		errstr=execute_token(prog,tokens[i]);
+		if(errstr)break;
+	}
+	for(int i=0;i<len;i++)free(tokens[i].str);
+	free(tokens);
+	assert(!prog->buildblock);
+	return errstr;
 }
 
 postl_stackval_t postl_stackval_makenum(double num){
@@ -1175,7 +1173,7 @@ const char* postl_callfunction(postl_program_t *prog,const char *name){
 					}
 					return errstr;
 				}
-				if(prog->buildblock)return "postl: Unclosed block in source";
+				assert(!prog->buildblock);
 			}
 			return NULL;
 		}

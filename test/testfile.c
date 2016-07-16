@@ -89,13 +89,7 @@ int main(int argc,char **argv){
 
 	postl_program_t *prog=postl_makeprogram();
 	postl_register(prog,"kaas",func_kaas);
-	if((errstr=postl_addcode(prog,source))){
-		fprintf(stderr,"\x1B[31m%s\x1B[0m\n",errstr);
-		postl_destroy(prog);
-		return 1;
-	}
-
-	if((errstr=postl_runglobalcode(prog))){
+	if((errstr=postl_runcode(prog,source))){
 		fprintf(stderr,"\x1B[31m%s\x1B[0m\n",errstr);
 		postl_destroy(prog);
 		return 1;

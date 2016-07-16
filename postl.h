@@ -24,8 +24,7 @@ typedef struct postl_program_t postl_program_t;
 
 postl_program_t* postl_makeprogram(void);
 void postl_register(postl_program_t *prog,const char *name,void (*func)(postl_program_t*));
-const char* postl_addcode(postl_program_t *prog,const char *source); //maybe returns error string
-const char* postl_runglobalcode(postl_program_t *prog); //maybe returns error string
+const char* postl_runcode(postl_program_t *prog,const char *source); //maybe returns error string
 
 postl_stackval_t postl_stackval_makenum(double num);
 postl_stackval_t postl_stackval_makestr(const char *str);
