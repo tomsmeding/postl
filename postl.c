@@ -44,7 +44,7 @@ static const char* valtype_string(postl_valtype_t type){
 	}
 }
 
-static double realmodulo(double a,double b){
+static double floatmod(double a,double b){
 	if(b==0)return nan("");
 	int sa=a<0?-1:1;
 	a=fabs(a); b=fabs(b);
@@ -593,7 +593,7 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 		BINARY_ARITH_OP(BI_MINUS,a.numv-b.numv)
 		BINARY_ARITH_OP(BI_TIMES,a.numv*b.numv)
 		BINARY_ARITH_OP(BI_DIVIDE,b.numv==0?nan(""):a.numv/b.numv)
-		BINARY_ARITH_OP(BI_MODULO,realmodulo(a.numv,b.numv))
+		BINARY_ARITH_OP(BI_MODULO,floatmod(a.numv,b.numv))
 		BINARY_ARITH_OP(BI_EQ,a.numv==b.numv)
 		BINARY_ARITH_OP(BI_GT,a.numv>b.numv)
 		BINARY_ARITH_OP(BI_LT,a.numv<b.numv)
