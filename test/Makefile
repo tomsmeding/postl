@@ -13,5 +13,5 @@ clean:
 remake: clean all
 
 
-testfile: testfile.c ../libpostl.a
+runpostl: runpostl.c ../libpostl.a
 	$(CC) $(CFLAGS) -o $@ $^

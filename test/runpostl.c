@@ -50,21 +50,6 @@ char *readstdin(void){
 	return buf;
 }
 
-void func_kaas(postl_program_t *prog){
-	if(postl_stack_size(prog)<2){
-		fprintf(stderr,"func_kaas got %d < 2 arguments\n",postl_stack_size(prog));
-		postl_destroy(prog);
-		exit(1);
-	}
-	postl_stackval_t ststr=postl_stack_pop(prog);
-	postl_stackval_t stnum=postl_stack_pop(prog);
-	printf("func_kaas called with types %d and %d\n",stnum.type,ststr.type);
-	printf("func_kaas called with %lf and <%s>\n",stnum.numv,ststr.strv);
-	postl_stack_push(prog,postl_stackval_makenum(stnum.numv+1));
-	postl_stackval_release(ststr);
-	postl_stackval_release(stnum);
-}
-
 int main(int argc,char **argv){
 	if(argc!=2){
 		fprintf(stderr,"Pass postl file as command-line argument\n");
@@ -88,19 +73,7 @@ int main(int argc,char **argv){
 	const char *errstr;
 
 	postl_program_t *prog=postl_makeprogram();
-	postl_register(prog,"kaas",func_kaas);
 	if((errstr=postl_runcode(prog,source))){
-		fprintf(stderr,"\x1B[31m%s\x1B[0m\n",errstr);
-		postl_destroy(prog);
-		return 1;
-	}
-
-	const postl_stackval_t arglist[]={
-		{.type=POSTL_NUM,.numv=6},
-		{.type=POSTL_STR,.strv="dingen"}
-	};
-	postl_stack_pushes(prog,2,arglist);
-	if((errstr=postl_callfunction(prog,"main"))){
 		fprintf(stderr,"\x1B[31m%s\x1B[0m\n",errstr);
 		postl_destroy(prog);
 		return 1;

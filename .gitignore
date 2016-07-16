@@ -3,4 +3,4 @@
 *.o
 *.dSYM
 postl
-test/testfile
+test/runpostl
