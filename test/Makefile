@@ -15,3 +15,6 @@ remake: clean all
 
 runpostl: runpostl.c ../libpostl.a
 	$(CC) $(CFLAGS) -o $@ $^
+
+repl: repl.c ../libpostl.a
+	$(CC) $(CFLAGS) -I/usr/local/opt/readline/include -L/usr/local/opt/readline/lib -o $@ $^ -lreadline
