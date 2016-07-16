@@ -20,8 +20,6 @@
 
 #define HASHMAP_SIZE (127)
 
-#define GLOBALCODE_FUNCNAME "__global"
-
 
 __attribute__((noreturn)) static void outofmem(void){
 	fprintf(stderr,"postl: OUT OF MEMORY!\n");
