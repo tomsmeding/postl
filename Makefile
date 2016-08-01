@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c11 -O2 -fwrapv
+CFLAGS = -Wall -Wextra -std=c11 -O2 -fwrapv -fPIC
 
 # Set to /usr/local to install in the system directories
 PREFIX = $(HOME)/prefix
@@ -64,7 +64,7 @@ test: libpostl.a
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 %.$(DYLIB_EXT): $(OBJECT_FILES)
-	$(CC) $(CFLAGS) $(DYLIB_FLAGS) -o $@ $^
+	$(CC) $(CFLAGS) $(DYLIB_FLAGS) -o $@ $^ -lm
 
 %.a: $(OBJECT_FILES)
 	ar -cr $@ $^

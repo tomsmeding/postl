@@ -1,6 +1,8 @@
 *.dylib
 *.a
 *.o
+*.so
 *.dSYM
 postl
 test/runpostl
+test/repl
