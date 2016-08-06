@@ -10,6 +10,7 @@
 #include "postl.h"
 
 #define malloc(n,t) (t*)malloc((n)*sizeof(t))
+#define realloc(p,n,t) (t*)realloc(p,(n)*sizeof(t))
 
 #if 0
 #define DBG(...) __VA_ARGS__
@@ -217,7 +218,7 @@ static const char* tokenise(token_t **tokensp,const char *source,int *ntokens){
 			if(isnan(nval)||isinf(nval)||numlen<=0)
 				DESTROY_TOKENS_RETF("postl: Invalid number in source");
 
-			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
+			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz,token_t))==NULL)outofmem();
 			tokens[len].type=TT_NUM;
 			tokens[len].str=malloc(numlen+1,char);
 			if(!tokens[len].str)outofmem();
@@ -236,7 +237,7 @@ static const char* tokenise(token_t **tokensp,const char *source,int *ntokens){
 			if(j==sourcelen)
 				DESTROY_TOKENS_RETF("postl: Unclosed string (from char %d) in source file",i-1);
 
-			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
+			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz,token_t))==NULL)outofmem();
 			tokens[len].type=TT_STR;
 			tokens[len].str=malloc(slen+1,char);
 			if(!tokens[len].str)outofmem();
@@ -275,7 +276,7 @@ static const char* tokenise(token_t **tokensp,const char *source,int *ntokens){
 			}
 			int wordlen=j-i;
 
-			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
+			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz,token_t))==NULL)outofmem();
 			tokens[len].type=isppc?TT_PPC:TT_WORD;
 			tokens[len].str=malloc(wordlen+1,char);
 			if(!tokens[len].str)outofmem();
@@ -284,7 +285,7 @@ static const char* tokenise(token_t **tokensp,const char *source,int *ntokens){
 			len++;
 			i=j-1;
 		} else /*if(strchr("+*-/%~&|><={}",source[i])!=NULL)*/{
-			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz*sizeof(token_t)))==NULL)outofmem();
+			if(len==sz&&(sz*=2,tokens=realloc(tokens,sz,token_t))==NULL)outofmem();
 			tokens[len].type=TT_SYMBOL;
 			tokens[len].str=malloc(2,char);
 			if(!tokens[len].str)outofmem(); //rlly
@@ -296,7 +297,7 @@ static const char* tokenise(token_t **tokensp,const char *source,int *ntokens){
 			if(blockdepth<0)
 				DESTROY_TOKENS_RETF("postl: Extra '}' in source");
 		} //else DESTROY_TOKENS_RET_MIN1;
-		DBGF("i=%d, len=%d; tokens[%d].type=%d",i,len,len==0?-123:len-1,tokens[len==0?-123:len-1].type);
+		//DBGF("i=%d, len=%d; tokens[%d].type=%d",i,len,len==0?-123:len-1,tokens[len==0?-123:len-1].type);
 	}
 
 	if(blockdepth<0)
@@ -317,7 +318,7 @@ static const char* execute_token(postl_program_t *prog,token_t token){
 			code_t *bb=prog->buildblock;
 			if(bb->len==bb->sz){
 				bb->sz++;
-				bb->tokens=realloc(bb->tokens,bb->sz*sizeof(token_t));
+				bb->tokens=realloc(bb->tokens,bb->sz,token_t);
 			}
 			bb->tokens[bb->len].type=TT_WORD;
 			asprintf(&bb->tokens[bb->len].str,"scopeleave");
@@ -337,7 +338,7 @@ static const char* execute_token(postl_program_t *prog,token_t token){
 			code_t *bb=prog->buildblock;
 			if(bb->len==bb->sz){
 				bb->sz*=2;
-				bb->tokens=realloc(bb->tokens,bb->sz);
+				bb->tokens=realloc(bb->tokens,bb->sz,token_t);
 				if(!bb->tokens)outofmem();
 			}
 			bb->tokens[bb->len].type=token.type;
