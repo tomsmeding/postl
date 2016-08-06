@@ -419,6 +419,7 @@ typedef enum builtin_enum_t{
 	BI_EQ, BI_GT, BI_LT,
 	BI_NOT,
 	BI_PRINT, BI_LF,
+	BI_GETC,
 	BI_BLOCKOPEN, /*BI_BLOCKCLOSE,*/ //blockclose is directly handled by execute_token
 	BI_DEF, BI_GDEF,
 	BI_EVAL,
@@ -429,6 +430,7 @@ typedef enum builtin_enum_t{
 	BI_STACKDUMP,
 	BI_CEIL, BI_FLOOR, BI_ROUND, BI_MIN, BI_MAX, BI_ABS, BI_SQRT, BI_EXP, BI_LOG, BI_POW,
 	BI_SIN, BI_COS, BI_TAN, BI_ASIN, BI_ACOS, BI_ATAN, BI_ATAN2, BI_E, BI_PI,
+	BI_STRIDX, BI_SUBSTR, BI_STRLEN, BI_CHR, BI_ORD,
 	BI_SCOPEENTER, BI_SCOPELEAVE
 } builtin_enum_t;
 
@@ -463,6 +465,7 @@ static void initialise_builtins_hmap(void){
 	builtin_add("!",         BI_NOT);
 	builtin_add("print",     BI_PRINT);
 	builtin_add("lf",        BI_LF);
+	builtin_add("getc",      BI_GETC);
 	builtin_add("{",         BI_BLOCKOPEN);
 	builtin_add("def",       BI_DEF);
 	builtin_add("gdef",      BI_GDEF);
@@ -497,6 +500,11 @@ static void initialise_builtins_hmap(void){
 	builtin_add("atan2",     BI_ATAN2);
 	builtin_add("E",         BI_E);
 	builtin_add("PI",        BI_PI);
+	builtin_add("stridx",    BI_STRIDX);
+	builtin_add("substr",    BI_SUBSTR);
+	builtin_add("strlen",    BI_STRLEN);
+	builtin_add("chr",       BI_CHR);
+	builtin_add("ord",       BI_ORD);
 	builtin_add("scopeenter",BI_SCOPEENTER);
 	builtin_add("scopeleave",BI_SCOPELEAVE);
 
@@ -595,9 +603,81 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 		BINARY_ARITH_OP(BI_TIMES,a.numv*b.numv)
 		BINARY_ARITH_OP(BI_DIVIDE,b.numv==0?nan(""):a.numv/b.numv)
 		BINARY_ARITH_OP(BI_MODULO,floatmod(a.numv,b.numv))
-		BINARY_ARITH_OP(BI_EQ,a.numv==b.numv)
-		BINARY_ARITH_OP(BI_GT,a.numv>b.numv)
-		BINARY_ARITH_OP(BI_LT,a.numv<b.numv)
+
+		case BI_EQ: STACKSIZE_CHECK(2);
+			b=postl_stack_pop(prog);
+			a=postl_stack_pop(prog);
+			res.type=POSTL_NUM;
+			if(a.type==POSTL_BLOCK||b.type==POSTL_BLOCK){
+				postl_stackval_release(a);
+				postl_stackval_release(b);
+				CANNOT_USE(POSTL_BLOCK);
+			} else if(a.type!=b.type){
+				res.numv=0;
+			} else if(a.type==POSTL_STR){
+				res.type=POSTL_NUM;
+				res.numv=strcmp(a.strv,b.strv)==0;
+			} else {
+				assert(a.type==POSTL_NUM);
+				res.type=POSTL_NUM;
+				res.numv=a.numv==b.numv;
+			}
+			postl_stack_push(prog,res);
+			postl_stackval_release(a);
+			postl_stackval_release(b);
+			break;
+
+		case BI_GT: STACKSIZE_CHECK(2);
+			b=postl_stack_pop(prog);
+			a=postl_stack_pop(prog);
+			if(a.type!=b.type){
+				postl_stackval_release(a);
+				postl_stackval_release(b);
+				RETURN_WITH_ERROR("postl: Builtin '=' needs arguments of similar types (%s != %s)",
+					valtype_string(a.type),valtype_string(b.type));
+			}
+			if(a.type==POSTL_BLOCK){
+				postl_stackval_release(a);
+				postl_stackval_release(b);
+				CANNOT_USE(POSTL_BLOCK);
+			} else if(a.type==POSTL_STR){
+				res.type=POSTL_NUM;
+				res.numv=strcmp(a.strv,b.strv)>0;
+			} else {
+				assert(a.type==POSTL_NUM);
+				res.type=POSTL_NUM;
+				res.numv=a.numv>b.numv;
+			}
+			postl_stack_push(prog,res);
+			postl_stackval_release(a);
+			postl_stackval_release(b);
+			break;
+
+		case BI_LT: STACKSIZE_CHECK(2);
+			b=postl_stack_pop(prog);
+			a=postl_stack_pop(prog);
+			if(a.type!=b.type){
+				postl_stackval_release(a);
+				postl_stackval_release(b);
+				RETURN_WITH_ERROR("postl: Builtin '=' needs arguments of similar types (%s != %s)",
+					valtype_string(a.type),valtype_string(b.type));
+			}
+			if(a.type==POSTL_BLOCK){
+				postl_stackval_release(a);
+				postl_stackval_release(b);
+				CANNOT_USE(POSTL_BLOCK);
+			} else if(a.type==POSTL_STR){
+				res.type=POSTL_NUM;
+				res.numv=strcmp(a.strv,b.strv)<0;
+			} else {
+				assert(a.type==POSTL_NUM);
+				res.type=POSTL_NUM;
+				res.numv=a.numv<b.numv;
+			}
+			postl_stack_push(prog,res);
+			postl_stackval_release(a);
+			postl_stackval_release(b);
+			break;
 
 		case BI_NOT: STACKSIZE_CHECK(1);
 			a=postl_stack_pop(prog);
@@ -616,6 +696,22 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 		case BI_LF:
 			putchar('\n');
 			break;
+
+		case BI_GETC:{
+			char c=getchar();
+			if(feof(stdin)){
+				res.type=POSTL_NUM;
+				res.numv=-1;
+			} else {
+				res.type=POSTL_STR;
+				res.strv=malloc(2,char);
+				if(!res.strv)outofmem();
+				res.strv[0]=c;
+				res.strv[1]='\0';
+			}
+			postl_stack_push(prog,res);
+			break;
+		}
 
 		case BI_BLOCKOPEN:
 			assert(!prog->buildblock);
@@ -921,6 +1017,101 @@ static const char* execute_builtin(postl_program_t *prog,const char *name,bool *
 
 		case BI_PI:
 			postl_stack_push(prog,postl_stackval_makenum(M_PI));
+			break;
+
+		case BI_STRIDX:{ STACKSIZE_CHECK(2);
+			b=postl_stack_pop(prog);
+			if(b.type!=POSTL_NUM||(int)b.numv!=b.numv){
+				postl_stackval_release(b);
+				RETURN_WITH_ERROR("postl: Second argument to 'stridx' should be integer, is %s",
+					valtype_string(b.type));
+			}
+			int idx=b.numv;
+			postl_stackval_release(b);
+			a=prog->stack->val;
+			if(a.type!=POSTL_STR){
+				RETURN_WITH_ERROR("postl: First argument to 'stridx' should be string, is %s",
+					valtype_string(a.type));
+			}
+			if(idx<0||idx>=(int)strlen(a.strv)){
+				RETURN_WITH_ERROR("postl: String index out of range in 'stridx'");
+			}
+			res.type=POSTL_STR;
+			res.strv=malloc(2,char);
+			if(!res.strv)outofmem();
+			res.strv[0]=a.strv[idx];
+			res.strv[1]='\0';
+			postl_stack_push(prog,res);
+			break;
+		}
+
+		case BI_SUBSTR:{ STACKSIZE_CHECK(3);
+			b=postl_stack_pop(prog);
+			if(b.type!=POSTL_NUM||(int)b.numv!=b.numv){
+				postl_stackval_release(b);
+				RETURN_WITH_ERROR("postl: Third argument to 'substr' should be integer, is %s",
+					valtype_string(b.type));
+			}
+			int length=b.numv;
+			postl_stackval_release(b);
+			b=postl_stack_pop(prog);
+			if(b.type!=POSTL_NUM||(int)b.numv!=b.numv){
+				postl_stackval_release(b);
+				RETURN_WITH_ERROR("postl: Second argument to 'substr' should be integer, is %s",
+					valtype_string(b.type));
+			}
+			int start=b.numv;
+			postl_stackval_release(b);
+			a=prog->stack->val;
+			if(a.type!=POSTL_STR){
+				RETURN_WITH_ERROR("postl: First argument to 'substr' should be string, is %s",
+					valtype_string(a.type));
+			}
+			int slen=strlen(a.strv);
+			if(start<0||start>=slen||length<0){
+				RETURN_WITH_ERROR("postl: Index out of range or length invalid in 'substr'");
+			}
+			if(start+length>slen)length=slen-start;
+			res.type=POSTL_STR;
+			res.strv=malloc(length+1,char);
+			if(!res.strv)outofmem();
+			memcpy(res.strv,a.strv+start,length);
+			res.strv[length]='\0';
+			postl_stack_push(prog,res);
+			break;
+		}
+
+		case BI_STRLEN: STACKSIZE_CHECK(1);
+			a=prog->stack->val;
+			if(a.type!=POSTL_STR)CANNOT_USE(a.type);
+			res.type=POSTL_NUM;
+			res.numv=strlen(a.strv);
+			postl_stack_push(prog,res);
+			break;
+
+		case BI_CHR: STACKSIZE_CHECK(1);
+			a=postl_stack_pop(prog);
+			if(a.type!=POSTL_NUM)CANNOT_USE(a.type);
+			res.type=POSTL_STR;
+			res.strv=malloc(2,char);
+			if(!res.strv)outofmem();
+			res.strv[0]=((int)a.numv%256+256)%256;
+			res.strv[1]='\0';
+			postl_stack_push(prog,res);
+			postl_stackval_release(a);
+			break;
+
+		case BI_ORD: STACKSIZE_CHECK(1);
+			a=postl_stack_pop(prog);
+			if(a.type!=POSTL_STR)CANNOT_USE(a.type);
+			if(strlen(a.strv)==0){
+				postl_stackval_release(a);
+				RETURN_WITH_ERROR("postl: String argument empty in 'ord'");
+			}
+			res.type=POSTL_NUM;
+			res.numv=(unsigned char)a.strv[0];
+			postl_stack_push(prog,res);
+			postl_stackval_release(a);
 			break;
 
 		case BI_SCOPEENTER:{
